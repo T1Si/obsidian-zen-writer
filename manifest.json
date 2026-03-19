@@ -1,0 +1,10 @@
+{
+  "id": "zen-writer",
+  "name": "Zen Writer",
+  "version": "0.0.1",
+  "minAppVersion": "1.5.0",
+  "description": "A minimal zen writing mode for Obsidian with a typewriter-like focus effect.",
+  "author": "sisiuzer",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}

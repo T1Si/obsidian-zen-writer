@@ -1,0 +1,19 @@
+{
+  "name": "obsidian-zen-writer",
+  "version": "0.0.1",
+  "private": true,
+  "description": "A minimal Obsidian zen writing plugin scaffold.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production"
+  },
+  "devDependencies": {
+    "@codemirror/view": "^6.38.6",
+    "@types/node": "^20.17.30",
+    "builtin-modules": "^4.0.0",
+    "esbuild": "^0.25.1",
+    "obsidian": "latest",
+    "typescript": "^5.8.2"
+  }
+}

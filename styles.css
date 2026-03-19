@@ -1,0 +1,51 @@
+body.zen-writer-enabled {
+  --zen-writer-max-width: 42rem;
+  --zen-writer-dim-opacity: 0.32;
+  --zen-writer-side-padding: clamp(24px, 8vw, 96px);
+  --zen-writer-active-line-bg: rgba(var(--interactive-accent-rgb, 120, 120, 120), 0.14);
+}
+
+body.zen-writer-enabled .workspace-leaf.mod-active .markdown-source-view.mod-cm6 .cm-scroller,
+body.zen-writer-enabled .workspace-leaf.mod-active .markdown-preview-view .markdown-preview-sizer {
+  padding-left: var(--zen-writer-side-padding);
+  padding-right: var(--zen-writer-side-padding);
+  box-sizing: border-box;
+}
+
+body.zen-writer-enabled .workspace-leaf.mod-active .markdown-source-view.mod-cm6 .cm-content,
+body.zen-writer-enabled .workspace-leaf.mod-active .markdown-preview-view .markdown-preview-sizer {
+  max-width: var(--zen-writer-max-width);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+body.zen-writer-enabled .workspace-leaf.mod-active .markdown-source-view.mod-cm6 .cm-line {
+  transition: none;
+}
+
+body.zen-writer-enabled .workspace-leaf.mod-active .markdown-source-view.mod-cm6 .cm-line:not(.cm-activeLine) {
+  filter: opacity(var(--zen-writer-dim-opacity));
+}
+
+body.zen-writer-enabled .workspace-leaf.mod-active .markdown-source-view.mod-cm6 .cm-activeLine {
+  filter: none !important;
+  background-color: var(--zen-writer-active-line-bg) !important;
+  border-radius: 8px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+body.zen-writer-enabled .workspace-leaf.mod-active .markdown-source-view.mod-cm6 .cm-activeLine,
+body.zen-writer-enabled .workspace-leaf.mod-active .markdown-source-view.mod-cm6 .cm-activeLine * {
+  filter: none !important;
+  opacity: 1 !important;
+}
+
+body.zen-writer-enabled .workspace-leaf.mod-active .markdown-source-view.mod-cm6 .cm-gutters {
+  opacity: 0.45;
+  transition: opacity 120ms ease;
+}
+
+body.zen-writer-enabled .workspace-leaf.mod-active .markdown-source-view.mod-cm6 .cm-activeLineGutter {
+  opacity: 1;
+}
