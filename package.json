@@ -1,8 +1,8 @@
 {
-  "name": "obsidian-zen-writer",
-  "version": "0.2.0",
+  "name": "zen-writer",
+  "version": "0.2.1",
   "private": true,
-  "description": "一款实用的 Obsidian 禅意写作模式插件：提供沉浸式的写作体验。 / A practical Zen Mode plugin for Obsidian: offers an immersive writing experience.",
+  "description": "A premium distraction-free writing environment with typewriter scrolling, focus masks, and immersive paper themes.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
