@@ -1,2 +1,9 @@
-node_modules
+node_modules/
 .DS_Store
+# Compiled JS output (upload to release assets instead)
+main.js
+# Local plugin data/settings
+data.json
+# Build directories
+dist/
+build/

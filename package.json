@@ -1,8 +1,8 @@
 {
   "name": "obsidian-zen-writer",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "private": true,
-  "description": "A minimal Obsidian zen writing plugin scaffold.",
+  "description": "一款实用的 Obsidian 禅意写作模式插件：提供沉浸式的写作体验。 / A practical Zen Mode plugin for Obsidian: offers an immersive writing experience.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",

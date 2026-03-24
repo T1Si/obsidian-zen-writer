@@ -1,9 +1,9 @@
 {
   "id": "zen-writer",
   "name": "Zen Writer",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "minAppVersion": "1.5.0",
-  "description": "A minimal zen writing mode for Obsidian with a typewriter-like focus effect.",
+  "description": "一款实用的 Obsidian 禅意写作模式插件：提供沉浸式的写作体验。 / A practical Zen Mode plugin for Obsidian: offers an immersive writing experience.",
   "author": "sisiuzer",
   "authorUrl": "",
   "isDesktopOnly": false

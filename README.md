@@ -1,37 +1,50 @@
 # Zen Writer
 
-A minimal Obsidian plugin scaffold for a zen writing mode with a typewriter-like cursor centering effect.
+English | [简体中文](./README_CN.md)
 
-## What it does
+A premium, distraction-free immersive writing environment for Obsidian.
 
-- Adds a `Toggle zen mode` command
-- Narrows the active editor width
-- Dims non-active lines
-- Keeps the cursor line centered while typing
+## ✨ Features
 
-## Development
+- **Typewriter Scrolling**: Keeps your active line centered vertically, reducing neck strain during long writing sessions.
+- **Immersive Paper Themes**:
+    - **System Default**: Seamlessly blends with your current Obsidian theme.
+    - **Sepia**: Warm, paper-like tones for an analog feel.
+    - **Green**: Refreshing mint colors to reduce eye fatigue.
+    - **Dark Night**: High-contrast deep gray mode for maximum focus.
+- **Ultra-Minimal UI**: Automatically hides sidebars, ribbons, and status bars, leaving you with nothing but a pure writing canvas.
+- **Focus Guidance**: Uses a unique "Picker" mask and subtle background dimming to naturally lock your eyes onto the current paragraph.
+- **Full Localization**: Native support for English and Chinese (i18n), ensuring all settings and commands feel right at home.
+
+## 🚀 Quick Start
+
+### Commands
+- Run **"Enter/Exit Zen Writing Mode"** from the Command Palette.
+- Press **`Esc`** at any time to quickly exit.
+
+### Settings
+Customize your experience:
+- Choose your **Paper Theme**.
+- Adjust the **Content Max Width**.
+- Fine-tune **Dim Opacity** for non-active lines.
+- Toggle the minimal **Top Exit Button**.
+
+## 📦 Installation
+
+1. Search for **Zen Writer** in the Obsidian Community Plugins (Coming Soon).
+2. **Manual Installation**:
+    - Download `main.js`, `styles.css`, and `manifest.json` from the [Releases](https://github.com/your-repo/obsidian-zen-writer/releases) page.
+    - Place them into `.obsidian/plugins/obsidian-zen-writer/`.
+    - Reload Obsidian and enable the plugin.
+
+## 🛠 Development
 
 ```bash
 npm install
-npm run dev
+npm run dev   # Hot-reload development
+npm run build # Build for production
 ```
 
-## Build
+## 📄 License
 
-```bash
-npm run build
-```
-
-## Install in a vault
-
-Copy these files into your vault plugin folder:
-
-- `manifest.json`
-- `main.js`
-- `styles.css`
-
-The target path should look like:
-
-```text
-.obsidian/plugins/zen-writer/
-```
+MIT License.
