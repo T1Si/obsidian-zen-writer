@@ -1,4 +1,4 @@
-import { MarkdownView, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { MarkdownView, Plugin, PluginSettingTab, Setting, TFile, setIcon } from "obsidian";
 
 type ZenWriterCenterTrigger = "typing" | "navigation" | "pointer" | "open" | "resize" | "selection" | "wheel";
 type EditorCursor = { line: number; ch: number };
@@ -109,14 +109,16 @@ export default class ZenWriterPlugin extends Plugin {
     );
 
     // 监听键盘导航事件
-    this.registerDomEvent(document, "keydown", async (event: KeyboardEvent) => {
+    this.registerDomEvent(document, "keydown", (event: KeyboardEvent) => {
       if (!this.settings.enabled || this.isComposing) {
         return;
       }
 
       // 快捷退出：按下 Esc 键退出禅意模式
       if (event.key === "Escape") {
-        await this.exitZenMode();
+        void this.exitZenMode().catch((_e) => {
+          console.error("Zen Writer: Failed to exit via Escape", _e);
+        });
         return;
       }
 
@@ -419,7 +421,7 @@ export default class ZenWriterPlugin extends Plugin {
     }
 
     // 如果没有找到已打开的 leaf，尝试打开文件
-    this.app.workspace.getLeaf(false).openFile(file as any);
+    this.app.workspace.getLeaf(false).openFile(file as TFile);
   }
 
   private createZenExitButton(): void {
@@ -438,14 +440,9 @@ export default class ZenWriterPlugin extends Plugin {
     // 创建退出按钮 (只有 X 图标)
     const button = document.createElement("div");
     button.className = "zen-writer-exit-button";
-    button.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="6" x2="6" y2="18"></line>
-        <line x1="6" y1="6" x2="18" y2="18"></line>
-      </svg>
-    `;
-    button.addEventListener("click", async () => {
-      await this.exitZenMode();
+    setIcon(button, "x");
+    button.addEventListener("click", () => {
+      void this.exitZenMode().catch(() => {});
     });
 
     document.body.appendChild(button);
@@ -453,27 +450,21 @@ export default class ZenWriterPlugin extends Plugin {
 
     // 鼠标移到顶部时显示按钮
     trigger.addEventListener("mouseenter", () => {
-      if (button) {
-        button.style.transform = "translateX(-50%) translateY(0)";
-        button.style.opacity = "1";
-      }
+      button?.classList.add("is-visible");
     });
 
     trigger.addEventListener("mouseleave", () => {
       if (button && !button.matches(":hover")) {
-        button.style.transform = "translateX(-50%) translateY(-100%)";
-        button.style.opacity = "0";
+        button.classList.remove("is-visible");
       }
     });
 
     button.addEventListener("mouseenter", () => {
-      button.style.transform = "translateX(-50%) translateY(0)";
-      button.style.opacity = "1";
+      button.classList.add("is-visible");
     });
 
     button.addEventListener("mouseleave", () => {
-      button.style.transform = "translateX(-50%) translateY(-100%)";
-      button.style.opacity = "0";
+      button.classList.remove("is-visible");
     });
   }
 
@@ -1650,10 +1641,10 @@ export default class ZenWriterPlugin extends Plugin {
     const left = Math.max(0, scrollerRect.left - hostRect.left + this.settings.pickerPaddingX);
     const width = Math.max(0, scrollerRect.width - this.settings.pickerPaddingX * 2);
 
-    this.focusFrameEl.style.top = `${top}px`;
-    this.focusFrameEl.style.left = `${left}px`;
-    this.focusFrameEl.style.width = `${width}px`;
-    this.focusFrameEl.style.height = `${height}px`;
+    this.focusFrameEl.style.setProperty("top", `${top}px`);
+    this.focusFrameEl.style.setProperty("left", `${left}px`);
+    this.focusFrameEl.style.setProperty("width", `${width}px`);
+    this.focusFrameEl.style.setProperty("height", `${height}px`);
 
     this.updateFocusFrameEdgeSpacing(view, scroller);
     return true;
@@ -1704,20 +1695,20 @@ export default class ZenWriterPlugin extends Plugin {
     
     // Attempt to remove existing commands to avoid duplicates during language hot-swap
     try {
-      const commands = (this.app as any).commands;
+      const commands = (this.app as unknown as { commands: { removeCommand: (id: string) => void } }).commands;
       if (commands) {
-        commands.removeCommand(`${this.manifest.id}:toggle-zen-writer`);
-        commands.removeCommand(`${this.manifest.id}:exit-zen-writer`);
+        commands.removeCommand("toggle-zen-writer");
+        commands.removeCommand("exit-zen-writer");
       }
-    } catch (e) {
+    } catch (_e) {
       // Fail silently if command management fails
     }
 
     this.addCommand({
       id: "toggle-zen-writer",
       name: t.commandToggle,
-      callback: async () => {
-        await this.toggleZenWriter();
+      callback: () => {
+        void this.toggleZenWriter().catch(() => {});
       },
     });
   }
@@ -1727,12 +1718,12 @@ const I18N = {
   en: {
     language: "Language",
     languageDesc: "Choose the display language for settings.",
-    themeDisplay: "Editor Paper Theme",
+    themeDisplay: "Editor paper theme",
     themeDisplayDesc: "Choose a background color palette for the writing canvas.",
     themeDefault: "System Default",
-    themeSepia: "Sepia / Warm",
-    themeGreen: "Mint Green",
-    themeDark: "Dark Night",
+    themeSepia: "Sepia / warm",
+    themeGreen: "Mint green",
+    themeDark: "Dark night",
     activeLineGlow: "Active line background",
     activeLineGlowDesc: "Highlight the current line with a subtle background.",
     contentWidth: "Content width",
@@ -1746,10 +1737,10 @@ const I18N = {
     pickerPadding: "Picker side padding",
     pickerPaddingDesc: "Adds horizontal inset so the picker window does not touch the editor edges.",
     restoreDefault: "Restore default",
-    ribbonTooltip: "Enter Zen Writing Mode",
-    commandToggle: "Enter/Exit Zen Writing Mode",
+    ribbonTooltip: "Enter zen writing mode",
+    commandToggle: "Enter/exit zen writing mode",
     showExitButton: "Show top exit button",
-    showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit Zen mode.",
+    showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit zen mode.",
   },
   zh: {
     language: "语言",
@@ -1806,11 +1797,13 @@ class ZenWriterSettingTab extends PluginSettingTab {
           .addOption("en", "English")
           .addOption("zh", "简体中文")
           .setValue(this.plugin.settings.language)
-          .onChange(async (value: "en" | "zh") => {
+          .onChange((value: "en" | "zh") => {
             this.plugin.settings.language = value;
-            await this.plugin.saveSettings();
-            this.plugin.applyZenState();
-            this.display();
+            void (async () => {
+              await this.plugin.saveSettings();
+              this.plugin.applyZenState();
+              this.display();
+            })().catch(() => {});
           })
       );
 
@@ -1824,10 +1817,12 @@ class ZenWriterSettingTab extends PluginSettingTab {
           .addOption("green", t.themeGreen)
           .addOption("dark", t.themeDark)
           .setValue(this.plugin.settings.themeDisplay)
-          .onChange(async (value: "default" | "sepia" | "green" | "dark") => {
+          .onChange((value: "default" | "sepia" | "green" | "dark") => {
             this.plugin.settings.themeDisplay = value;
-            await this.plugin.saveSettings();
-            this.plugin.applyZenState();
+            void (async () => {
+              await this.plugin.saveSettings();
+              this.plugin.applyZenState();
+            })().catch(() => {});
           })
       );
 
@@ -1835,9 +1830,9 @@ class ZenWriterSettingTab extends PluginSettingTab {
       .setName(t.showExitButton)
       .setDesc(t.showExitButtonDesc)
       .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showExitButton).onChange(async (value) => {
+        toggle.setValue(this.plugin.settings.showExitButton).onChange((value) => {
           this.plugin.settings.showExitButton = value;
-          await this.plugin.saveSettings();
+          void this.plugin.saveSettings().catch(() => {});
         }),
       );
 
@@ -1845,9 +1840,9 @@ class ZenWriterSettingTab extends PluginSettingTab {
       .setName(t.activeLineGlow)
       .setDesc(t.activeLineGlowDesc)
       .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.activeLineGlow).onChange(async (value) => {
+        toggle.setValue(this.plugin.settings.activeLineGlow).onChange((value) => {
           this.plugin.settings.activeLineGlow = value;
-          await this.plugin.saveSettings();
+          void this.plugin.saveSettings().catch(() => {});
         }),
       );
 
@@ -1855,19 +1850,21 @@ class ZenWriterSettingTab extends PluginSettingTab {
       .setName(t.contentWidth)
       .setDesc(t.contentWidthDesc)
       .addText((text) =>
-        text.setPlaceholder("42rem").setValue(this.plugin.settings.maxWidth).onChange(async (value) => {
+        text.setPlaceholder("42rem").setValue(this.plugin.settings.maxWidth).onChange((value) => {
           this.plugin.settings.maxWidth = value.trim() || DEFAULT_SETTINGS.maxWidth;
-          await this.plugin.saveSettings();
+          void this.plugin.saveSettings().catch(() => {});
         }),
       )
       .addExtraButton((button) =>
         button
           .setIcon("reset")
           .setTooltip(t.restoreDefault)
-          .onClick(async () => {
+          .onClick(() => {
             this.plugin.settings.maxWidth = DEFAULT_SETTINGS.maxWidth;
-            await this.plugin.saveSettings();
-            this.display();
+            void (async () => {
+              await this.plugin.saveSettings();
+              this.display();
+            })().catch(() => {});
           })
       );
 
@@ -1879,19 +1876,21 @@ class ZenWriterSettingTab extends PluginSettingTab {
           .setLimits(0.1, 0.55, 0.05)
           .setValue(this.plugin.settings.dimOpacity)
           .setDynamicTooltip()
-          .onChange(async (value) => {
+          .onChange((value) => {
             this.plugin.settings.dimOpacity = value;
-            await this.plugin.saveSettings();
+            void this.plugin.saveSettings().catch(() => {});
           }),
       )
       .addExtraButton((button) =>
         button
           .setIcon("reset")
           .setTooltip(t.restoreDefault)
-          .onClick(async () => {
+          .onClick(() => {
             this.plugin.settings.dimOpacity = DEFAULT_SETTINGS.dimOpacity;
-            await this.plugin.saveSettings();
-            this.display();
+            void (async () => {
+              await this.plugin.saveSettings();
+              this.display();
+            })().catch(() => {});
           })
       );
 
@@ -1903,19 +1902,21 @@ class ZenWriterSettingTab extends PluginSettingTab {
           .setLimits(0, 200, 4)
           .setValue(this.plugin.settings.centerDelayMs)
           .setDynamicTooltip()
-          .onChange(async (value) => {
+          .onChange((value) => {
             this.plugin.settings.centerDelayMs = value;
-            await this.plugin.saveSettings();
+            void this.plugin.saveSettings().catch(() => {});
           }),
       )
       .addExtraButton((button) =>
         button
           .setIcon("reset")
           .setTooltip(t.restoreDefault)
-          .onClick(async () => {
+          .onClick(() => {
             this.plugin.settings.centerDelayMs = DEFAULT_SETTINGS.centerDelayMs;
-            await this.plugin.saveSettings();
-            this.display();
+            void (async () => {
+              await this.plugin.saveSettings();
+              this.display();
+            })().catch(() => {});
           })
       );
 
@@ -1928,19 +1929,21 @@ class ZenWriterSettingTab extends PluginSettingTab {
           .setLimits(40, 120, 2)
           .setValue(this.plugin.settings.pickerFrameHeightPx)
           .setDynamicTooltip()
-          .onChange(async (value) => {
+          .onChange((value) => {
             this.plugin.settings.pickerFrameHeightPx = value;
-            await this.plugin.saveSettings();
+            void this.plugin.saveSettings().catch(() => {});
           }),
       )
       .addExtraButton((button) =>
         button
           .setIcon("reset")
           .setTooltip(t.restoreDefault)
-          .onClick(async () => {
+          .onClick(() => {
             this.plugin.settings.pickerFrameHeightPx = DEFAULT_SETTINGS.pickerFrameHeightPx;
-            await this.plugin.saveSettings();
-            this.display();
+            void (async () => {
+              await this.plugin.saveSettings();
+              this.display();
+            })().catch(() => {});
           })
       );
 
@@ -1952,19 +1955,21 @@ class ZenWriterSettingTab extends PluginSettingTab {
           .setLimits(0, 48, 2)
           .setValue(this.plugin.settings.pickerPaddingX)
           .setDynamicTooltip()
-          .onChange(async (value) => {
+          .onChange((value) => {
             this.plugin.settings.pickerPaddingX = value;
-            await this.plugin.saveSettings();
+            void this.plugin.saveSettings().catch(() => {});
           }),
       )
       .addExtraButton((button) =>
         button
           .setIcon("reset")
           .setTooltip(t.restoreDefault)
-          .onClick(async () => {
+          .onClick(() => {
             this.plugin.settings.pickerPaddingX = DEFAULT_SETTINGS.pickerPaddingX;
-            await this.plugin.saveSettings();
-            this.display();
+            void (async () => {
+              await this.plugin.saveSettings();
+              this.display();
+            })().catch(() => {});
           })
       );
   }

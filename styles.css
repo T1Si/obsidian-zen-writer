@@ -182,53 +182,62 @@ body.zen-writer-enabled .workspace-split.mod-vertical > .workspace-leaf-content 
   padding-top: 0 !important;
 }
 
-/* Zen Exit Button */
-.zen-writer-exit-trigger {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 48px;
-  z-index: 998;
-  pointer-events: auto;
-}
-
+/* 退出按钮 - 极浅 X 图标 */
 .zen-writer-exit-button {
   position: fixed;
   top: 12px;
   left: 50%;
-  transform: translateX(-50%) translateY(-20px);
-  z-index: 1000;
+  transform: translateX(-50%) translateY(-100%);
+  z-index: 10000;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  color: var(--zen-exit-button-color, var(--text-normal));
+  opacity: 0;
+  transition: all 0.3s ease;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  background: transparent;
-  border-radius: 50%;
-  cursor: pointer;
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
-              opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              background 0.2s ease;
-  opacity: 0;
-  color: var(--text-normal);
-  pointer-events: none;
+  background-color: var(--zen-exit-button-bg, rgba(128, 128, 128, 0.05));
+  border: var(--zen-exit-button-border, none);
+  backdrop-filter: var(--zen-exit-button-blur, none);
+  -webkit-backdrop-filter: var(--zen-exit-button-blur, none);
+  pointer-events: auto;
 }
 
-.zen-writer-exit-button:hover,
+/* 当鼠标悬停在顶部触发区域，或者在 JS 强制使可见时：显示，背景淡 */
+.zen-writer-exit-button.is-visible,
 .zen-writer-exit-trigger:hover + .zen-writer-exit-button {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
+
+/* 当鼠标完全悬停在按钮上时：高亮 */
+.zen-writer-exit-button:hover {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1 !important;
+  background-color: var(--zen-exit-button-bg-hover, rgba(128, 128, 128, 0.25));
+}
+
+.zen-writer-exit-trigger {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 48px;
+  z-index: 9999;
   pointer-events: auto;
 }
 
 .zen-writer-exit-button svg {
   width: 20px;
   height: 20px;
-  opacity: 0.2;
+  opacity: 0.15;
   transition: opacity 0.2s ease;
 }
 
 .zen-writer-exit-button:hover svg {
-  opacity: 0.6;
+  opacity: 0.8;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -265,6 +274,11 @@ body.zen-writer-enabled.zen-theme-green .workspace-leaf.mod-active .workspace-le
 
 body.zen-writer-enabled.zen-theme-dark {
   --zen-writer-dim-opacity: 0.55 !important;
+  --zen-exit-button-bg: rgba(255, 255, 255, 0.05) !important;
+  --zen-exit-button-bg-hover: rgba(255, 255, 255, 0.15) !important;
+  --zen-exit-button-color: #FFFFFF !important;
+  --zen-exit-button-border: none !important;
+  --zen-exit-button-blur: none !important;
 }
 
 body.zen-writer-enabled.zen-theme-dark .markdown-source-view.mod-cm6.zen-writer-picker-view .cm-editor.zen-writer-focus-frame-host::after {

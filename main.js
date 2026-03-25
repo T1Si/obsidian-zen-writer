@@ -100,12 +100,14 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
         this.scheduleViewportRefresh("typing");
       })
     );
-    this.registerDomEvent(document, "keydown", async (event) => {
+    this.registerDomEvent(document, "keydown", (event) => {
       if (!this.settings.enabled || this.isComposing) {
         return;
       }
       if (event.key === "Escape") {
-        await this.exitZenMode();
+        void this.exitZenMode().catch((_e) => {
+          console.error("Zen Writer: Failed to exit via Escape", _e);
+        });
         return;
       }
       const isNavigationKey = [
@@ -364,36 +366,26 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     this.zenExitTriggerEl = trigger;
     const button = document.createElement("div");
     button.className = "zen-writer-exit-button";
-    button.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="6" x2="6" y2="18"></line>
-        <line x1="6" y1="6" x2="18" y2="18"></line>
-      </svg>
-    `;
-    button.addEventListener("click", async () => {
-      await this.exitZenMode();
+    (0, import_obsidian.setIcon)(button, "x");
+    button.addEventListener("click", () => {
+      void this.exitZenMode().catch(() => {
+      });
     });
     document.body.appendChild(button);
     this.zenExitButtonEl = button;
     trigger.addEventListener("mouseenter", () => {
-      if (button) {
-        button.style.transform = "translateX(-50%) translateY(0)";
-        button.style.opacity = "1";
-      }
+      button == null ? void 0 : button.classList.add("is-visible");
     });
     trigger.addEventListener("mouseleave", () => {
       if (button && !button.matches(":hover")) {
-        button.style.transform = "translateX(-50%) translateY(-100%)";
-        button.style.opacity = "0";
+        button.classList.remove("is-visible");
       }
     });
     button.addEventListener("mouseenter", () => {
-      button.style.transform = "translateX(-50%) translateY(0)";
-      button.style.opacity = "1";
+      button.classList.add("is-visible");
     });
     button.addEventListener("mouseleave", () => {
-      button.style.transform = "translateX(-50%) translateY(-100%)";
-      button.style.opacity = "0";
+      button.classList.remove("is-visible");
     });
   }
   removeZenExitButton() {
@@ -1314,10 +1306,10 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     const top = Math.max(0, hostRelativeAnchor - height / 2);
     const left = Math.max(0, scrollerRect.left - hostRect.left + this.settings.pickerPaddingX);
     const width = Math.max(0, scrollerRect.width - this.settings.pickerPaddingX * 2);
-    this.focusFrameEl.style.top = `${top}px`;
-    this.focusFrameEl.style.left = `${left}px`;
-    this.focusFrameEl.style.width = `${width}px`;
-    this.focusFrameEl.style.height = `${height}px`;
+    this.focusFrameEl.style.setProperty("top", `${top}px`);
+    this.focusFrameEl.style.setProperty("left", `${left}px`);
+    this.focusFrameEl.style.setProperty("width", `${width}px`);
+    this.focusFrameEl.style.setProperty("height", `${height}px`);
     this.updateFocusFrameEdgeSpacing(view, scroller);
     return true;
   }
@@ -1359,16 +1351,17 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     try {
       const commands = this.app.commands;
       if (commands) {
-        commands.removeCommand(`${this.manifest.id}:toggle-zen-writer`);
-        commands.removeCommand(`${this.manifest.id}:exit-zen-writer`);
+        commands.removeCommand("toggle-zen-writer");
+        commands.removeCommand("exit-zen-writer");
       }
-    } catch (e) {
+    } catch (_e) {
     }
     this.addCommand({
       id: "toggle-zen-writer",
       name: t.commandToggle,
-      callback: async () => {
-        await this.toggleZenWriter();
+      callback: () => {
+        void this.toggleZenWriter().catch(() => {
+        });
       }
     });
   }
@@ -1377,12 +1370,12 @@ var I18N = {
   en: {
     language: "Language",
     languageDesc: "Choose the display language for settings.",
-    themeDisplay: "Editor Paper Theme",
+    themeDisplay: "Editor paper theme",
     themeDisplayDesc: "Choose a background color palette for the writing canvas.",
     themeDefault: "System Default",
-    themeSepia: "Sepia / Warm",
-    themeGreen: "Mint Green",
-    themeDark: "Dark Night",
+    themeSepia: "Sepia / warm",
+    themeGreen: "Mint green",
+    themeDark: "Dark night",
     activeLineGlow: "Active line background",
     activeLineGlowDesc: "Highlight the current line with a subtle background.",
     contentWidth: "Content width",
@@ -1396,10 +1389,10 @@ var I18N = {
     pickerPadding: "Picker side padding",
     pickerPaddingDesc: "Adds horizontal inset so the picker window does not touch the editor edges.",
     restoreDefault: "Restore default",
-    ribbonTooltip: "Enter Zen Writing Mode",
-    commandToggle: "Enter/Exit Zen Writing Mode",
+    ribbonTooltip: "Enter zen writing mode",
+    commandToggle: "Enter/exit zen writing mode",
     showExitButton: "Show top exit button",
-    showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit Zen mode."
+    showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit zen mode."
   },
   zh: {
     language: "\u8BED\u8A00",
@@ -1442,90 +1435,118 @@ var ZenWriterSettingTab = class extends import_obsidian.PluginSettingTab {
     heading.textContent = "Zen Writer";
     containerEl.appendChild(heading);
     new import_obsidian.Setting(containerEl).setName(t.language).setDesc(t.languageDesc).addDropdown(
-      (dropdown) => dropdown.addOption("en", "English").addOption("zh", "\u7B80\u4F53\u4E2D\u6587").setValue(this.plugin.settings.language).onChange(async (value) => {
+      (dropdown) => dropdown.addOption("en", "English").addOption("zh", "\u7B80\u4F53\u4E2D\u6587").setValue(this.plugin.settings.language).onChange((value) => {
         this.plugin.settings.language = value;
-        await this.plugin.saveSettings();
-        this.plugin.applyZenState();
-        this.display();
+        void (async () => {
+          await this.plugin.saveSettings();
+          this.plugin.applyZenState();
+          this.display();
+        })().catch(() => {
+        });
       })
     );
     new import_obsidian.Setting(containerEl).setName(t.themeDisplay).setDesc(t.themeDisplayDesc).addDropdown(
-      (dropdown) => dropdown.addOption("default", t.themeDefault).addOption("sepia", t.themeSepia).addOption("green", t.themeGreen).addOption("dark", t.themeDark).setValue(this.plugin.settings.themeDisplay).onChange(async (value) => {
+      (dropdown) => dropdown.addOption("default", t.themeDefault).addOption("sepia", t.themeSepia).addOption("green", t.themeGreen).addOption("dark", t.themeDark).setValue(this.plugin.settings.themeDisplay).onChange((value) => {
         this.plugin.settings.themeDisplay = value;
-        await this.plugin.saveSettings();
-        this.plugin.applyZenState();
+        void (async () => {
+          await this.plugin.saveSettings();
+          this.plugin.applyZenState();
+        })().catch(() => {
+        });
       })
     );
     new import_obsidian.Setting(containerEl).setName(t.showExitButton).setDesc(t.showExitButtonDesc).addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.showExitButton).onChange(async (value) => {
+      (toggle) => toggle.setValue(this.plugin.settings.showExitButton).onChange((value) => {
         this.plugin.settings.showExitButton = value;
-        await this.plugin.saveSettings();
+        void this.plugin.saveSettings().catch(() => {
+        });
       })
     );
     new import_obsidian.Setting(containerEl).setName(t.activeLineGlow).setDesc(t.activeLineGlowDesc).addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.activeLineGlow).onChange(async (value) => {
+      (toggle) => toggle.setValue(this.plugin.settings.activeLineGlow).onChange((value) => {
         this.plugin.settings.activeLineGlow = value;
-        await this.plugin.saveSettings();
+        void this.plugin.saveSettings().catch(() => {
+        });
       })
     );
     new import_obsidian.Setting(containerEl).setName(t.contentWidth).setDesc(t.contentWidthDesc).addText(
-      (text) => text.setPlaceholder("42rem").setValue(this.plugin.settings.maxWidth).onChange(async (value) => {
+      (text) => text.setPlaceholder("42rem").setValue(this.plugin.settings.maxWidth).onChange((value) => {
         this.plugin.settings.maxWidth = value.trim() || DEFAULT_SETTINGS.maxWidth;
-        await this.plugin.saveSettings();
+        void this.plugin.saveSettings().catch(() => {
+        });
       })
     ).addExtraButton(
-      (button) => button.setIcon("reset").setTooltip(t.restoreDefault).onClick(async () => {
+      (button) => button.setIcon("reset").setTooltip(t.restoreDefault).onClick(() => {
         this.plugin.settings.maxWidth = DEFAULT_SETTINGS.maxWidth;
-        await this.plugin.saveSettings();
-        this.display();
+        void (async () => {
+          await this.plugin.saveSettings();
+          this.display();
+        })().catch(() => {
+        });
       })
     );
     new import_obsidian.Setting(containerEl).setName(t.dimOpacity).setDesc(t.dimOpacityDesc).addSlider(
-      (slider) => slider.setLimits(0.1, 0.55, 0.05).setValue(this.plugin.settings.dimOpacity).setDynamicTooltip().onChange(async (value) => {
+      (slider) => slider.setLimits(0.1, 0.55, 0.05).setValue(this.plugin.settings.dimOpacity).setDynamicTooltip().onChange((value) => {
         this.plugin.settings.dimOpacity = value;
-        await this.plugin.saveSettings();
+        void this.plugin.saveSettings().catch(() => {
+        });
       })
     ).addExtraButton(
-      (button) => button.setIcon("reset").setTooltip(t.restoreDefault).onClick(async () => {
+      (button) => button.setIcon("reset").setTooltip(t.restoreDefault).onClick(() => {
         this.plugin.settings.dimOpacity = DEFAULT_SETTINGS.dimOpacity;
-        await this.plugin.saveSettings();
-        this.display();
+        void (async () => {
+          await this.plugin.saveSettings();
+          this.display();
+        })().catch(() => {
+        });
       })
     );
     new import_obsidian.Setting(containerEl).setName(t.centerDelay).setDesc(t.centerDelayDesc).addSlider(
-      (slider) => slider.setLimits(0, 200, 4).setValue(this.plugin.settings.centerDelayMs).setDynamicTooltip().onChange(async (value) => {
+      (slider) => slider.setLimits(0, 200, 4).setValue(this.plugin.settings.centerDelayMs).setDynamicTooltip().onChange((value) => {
         this.plugin.settings.centerDelayMs = value;
-        await this.plugin.saveSettings();
+        void this.plugin.saveSettings().catch(() => {
+        });
       })
     ).addExtraButton(
-      (button) => button.setIcon("reset").setTooltip(t.restoreDefault).onClick(async () => {
+      (button) => button.setIcon("reset").setTooltip(t.restoreDefault).onClick(() => {
         this.plugin.settings.centerDelayMs = DEFAULT_SETTINGS.centerDelayMs;
-        await this.plugin.saveSettings();
-        this.display();
+        void (async () => {
+          await this.plugin.saveSettings();
+          this.display();
+        })().catch(() => {
+        });
       })
     );
     new import_obsidian.Setting(containerEl).setName(t.pickerHeight).setDesc(t.pickerHeightDesc).addSlider(
-      (slider) => slider.setLimits(40, 120, 2).setValue(this.plugin.settings.pickerFrameHeightPx).setDynamicTooltip().onChange(async (value) => {
+      (slider) => slider.setLimits(40, 120, 2).setValue(this.plugin.settings.pickerFrameHeightPx).setDynamicTooltip().onChange((value) => {
         this.plugin.settings.pickerFrameHeightPx = value;
-        await this.plugin.saveSettings();
+        void this.plugin.saveSettings().catch(() => {
+        });
       })
     ).addExtraButton(
-      (button) => button.setIcon("reset").setTooltip(t.restoreDefault).onClick(async () => {
+      (button) => button.setIcon("reset").setTooltip(t.restoreDefault).onClick(() => {
         this.plugin.settings.pickerFrameHeightPx = DEFAULT_SETTINGS.pickerFrameHeightPx;
-        await this.plugin.saveSettings();
-        this.display();
+        void (async () => {
+          await this.plugin.saveSettings();
+          this.display();
+        })().catch(() => {
+        });
       })
     );
     new import_obsidian.Setting(containerEl).setName(t.pickerPadding).setDesc(t.pickerPaddingDesc).addSlider(
-      (slider) => slider.setLimits(0, 48, 2).setValue(this.plugin.settings.pickerPaddingX).setDynamicTooltip().onChange(async (value) => {
+      (slider) => slider.setLimits(0, 48, 2).setValue(this.plugin.settings.pickerPaddingX).setDynamicTooltip().onChange((value) => {
         this.plugin.settings.pickerPaddingX = value;
-        await this.plugin.saveSettings();
+        void this.plugin.saveSettings().catch(() => {
+        });
       })
     ).addExtraButton(
-      (button) => button.setIcon("reset").setTooltip(t.restoreDefault).onClick(async () => {
+      (button) => button.setIcon("reset").setTooltip(t.restoreDefault).onClick(() => {
         this.plugin.settings.pickerPaddingX = DEFAULT_SETTINGS.pickerPaddingX;
-        await this.plugin.saveSettings();
-        this.display();
+        void (async () => {
+          await this.plugin.saveSettings();
+          this.display();
+        })().catch(() => {
+        });
       })
     );
   }
