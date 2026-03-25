@@ -9,9 +9,13 @@ A premium, distraction-free immersive writing environment for Obsidian.
 - **Typewriter Scrolling**: Keeps your active line centered vertically, reducing neck strain during long writing sessions.
 - **Immersive Paper Themes**:
     - **System Default**: Seamlessly blends with your current Obsidian theme.
+      ![System Default](assets/system_default_theme.png)
     - **Sepia**: Warm, paper-like tones for an analog feel.
+      ![Sepia](assets/sepia_theme.png)
     - **Green**: Refreshing mint colors to reduce eye fatigue.
+      ![Green](assets/green_theme.png)
     - **Dark Night**: High-contrast deep gray mode for maximum focus.
+      ![Dark Night](assets/dark_night_theme.png)
 - **Ultra-Minimal UI**: Automatically hides sidebars, ribbons, and status bars, leaving you with nothing but a pure writing canvas.
 - **Focus Guidance**: Uses a unique "Picker" mask and subtle background dimming to naturally lock your eyes onto the current paragraph.
 - **Full Localization**: Native support for English and Chinese (i18n), ensuring all settings and commands feel right at home.
@@ -33,7 +37,7 @@ Customize your experience:
 
 1. Search for **Zen Writer** in the Obsidian Community Plugins (Coming Soon).
 2. **Manual Installation**:
-    - Download `main.js`, `styles.css`, and `manifest.json` from the [Releases](https://github.com/your-repo/obsidian-zen-writer/releases) page.
+    - Download `main.js`, `styles.css`, and `manifest.json` from the [Releases](https://github.com/T1Si/obsidian-zen-writer/releases) page.
     - Place them into `.obsidian/plugins/obsidian-zen-writer/`.
     - Reload Obsidian and enable the plugin.
 

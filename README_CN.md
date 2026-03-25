@@ -9,9 +9,13 @@
 - **打字机居中模式**：始终将当前输入行保持在屏幕中心，减少颈部疲劳。
 - **沉浸式纸张主题**：
     - **系统默认**：跟随你的 Obsidian 主题。
+      ![系统默认](assets/system_default_theme.png)
     - **护眼黄 (Sepia)**：模拟纸张质感，适合长文创作。
+      ![护眼黄](assets/sepia_theme.png)
     - **护眼绿 (Green)**：清爽的薄荷色调，缓解视觉疲劳。
+      ![护眼绿](assets/green_theme.png)
     - **深灰夜间 (Dark)**：高对比度深色模式，极致专注于每一个字符。
+      ![深灰夜间](assets/dark_night_theme.png)
 - **极致极简 UI**：开启后自动隐藏侧边栏、状态栏和标签页，只留下一张纯净的“稿纸”。
 - **聚焦视觉引导**：通过独特的背景虚化与虚化遮罩，让你的注意力自然锁定在当前行。
 - **多语言适配**：原生支持中英双语，包括设置面板、侧边栏按钮和命令面板。
@@ -34,7 +38,7 @@
 
 1. 在 Obsidian 插件社区中搜索 **Zen Writer** (即将上线)。
 2. 或者进行**手动安装**：
-    - 在 GitHub [Releases](https://github.com/your-repo/obsidian-zen-writer/releases) 页面下载最新的 `main.js`、`styles.css` 和 `manifest.json`。
+    - 在 GitHub [Releases](https://github.com/T1Si/obsidian-zen-writer/releases) 页面下载最新的 `main.js`、`styles.css` 和 `manifest.json`。
     - 将它们放入你的库目录：`.obsidian/plugins/obsidian-zen-writer/`。
     - 重启 Obsidian 并启用插件。
 

@@ -353,7 +353,9 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
         return;
       }
     }
-    this.app.workspace.getLeaf(false).openFile(file);
+    if (file instanceof import_obsidian.TFile) {
+      this.app.workspace.getLeaf(false).openFile(file);
+    }
   }
   createZenExitButton() {
     this.removeZenExitButton();
@@ -1351,13 +1353,12 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     try {
       const commands = this.app.commands;
       if (commands) {
-        commands.removeCommand("toggle-zen-writer");
-        commands.removeCommand("exit-zen-writer");
+        commands.removeCommand("toggle-zen");
       }
-    } catch (_e) {
+    } catch (e) {
     }
     this.addCommand({
-      id: "toggle-zen-writer",
+      id: "toggle-zen",
       name: t.commandToggle,
       callback: () => {
         void this.toggleZenWriter().catch(() => {
@@ -1372,7 +1373,7 @@ var I18N = {
     languageDesc: "Choose the display language for settings.",
     themeDisplay: "Editor paper theme",
     themeDisplayDesc: "Choose a background color palette for the writing canvas.",
-    themeDefault: "System Default",
+    themeDefault: "System default",
     themeSepia: "Sepia / warm",
     themeGreen: "Mint green",
     themeDark: "Dark night",

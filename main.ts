@@ -421,7 +421,9 @@ export default class ZenWriterPlugin extends Plugin {
     }
 
     // 如果没有找到已打开的 leaf，尝试打开文件
-    this.app.workspace.getLeaf(false).openFile(file as TFile);
+    if (file instanceof TFile) {
+      this.app.workspace.getLeaf(false).openFile(file);
+    }
   }
 
   private createZenExitButton(): void {
@@ -1697,15 +1699,14 @@ export default class ZenWriterPlugin extends Plugin {
     try {
       const commands = (this.app as unknown as { commands: { removeCommand: (id: string) => void } }).commands;
       if (commands) {
-        commands.removeCommand("toggle-zen-writer");
-        commands.removeCommand("exit-zen-writer");
+        commands.removeCommand("toggle-zen");
       }
-    } catch (_e) {
+    } catch {
       // Fail silently if command management fails
     }
 
     this.addCommand({
-      id: "toggle-zen-writer",
+      id: "toggle-zen",
       name: t.commandToggle,
       callback: () => {
         void this.toggleZenWriter().catch(() => {});
@@ -1720,7 +1721,7 @@ const I18N = {
     languageDesc: "Choose the display language for settings.",
     themeDisplay: "Editor paper theme",
     themeDisplayDesc: "Choose a background color palette for the writing canvas.",
-    themeDefault: "System Default",
+    themeDefault: "System default",
     themeSepia: "Sepia / warm",
     themeGreen: "Mint green",
     themeDark: "Dark night",
