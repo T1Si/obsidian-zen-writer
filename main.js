@@ -354,7 +354,8 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       }
     }
     if (file instanceof import_obsidian.TFile) {
-      this.app.workspace.getLeaf(false).openFile(file);
+      void this.app.workspace.getLeaf(false).openFile(file).catch(() => {
+      });
     }
   }
   createZenExitButton() {
@@ -1344,8 +1345,9 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       this.ribbonIconEl.setAttribute("aria-label", t.ribbonTooltip);
       return;
     }
-    this.ribbonIconEl = this.addRibbonIcon("pen-tool", t.ribbonTooltip, async () => {
-      await this.toggleZenWriter();
+    this.ribbonIconEl = this.addRibbonIcon("pen-tool", t.ribbonTooltip, () => {
+      void this.toggleZenWriter().catch(() => {
+      });
     });
   }
   registerCommands() {
@@ -1390,10 +1392,10 @@ var I18N = {
     pickerPadding: "Picker side padding",
     pickerPaddingDesc: "Adds horizontal inset so the picker window does not touch the editor edges.",
     restoreDefault: "Restore default",
-    ribbonTooltip: "Enter zen writing mode",
-    commandToggle: "Enter/exit zen writing mode",
+    ribbonTooltip: "Enter Zen writing mode",
+    commandToggle: "Enter/exit Zen writing mode",
     showExitButton: "Show top exit button",
-    showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit zen mode."
+    showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit Zen mode."
   },
   zh: {
     language: "\u8BED\u8A00",

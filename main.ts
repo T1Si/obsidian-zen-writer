@@ -422,7 +422,7 @@ export default class ZenWriterPlugin extends Plugin {
 
     // 如果没有找到已打开的 leaf，尝试打开文件
     if (file instanceof TFile) {
-      this.app.workspace.getLeaf(false).openFile(file);
+      void this.app.workspace.getLeaf(false).openFile(file).catch(() => {});
     }
   }
 
@@ -1687,8 +1687,8 @@ export default class ZenWriterPlugin extends Plugin {
       this.ribbonIconEl.setAttribute("aria-label", t.ribbonTooltip);
       return;
     }
-    this.ribbonIconEl = this.addRibbonIcon("pen-tool", t.ribbonTooltip, async () => {
-      await this.toggleZenWriter();
+    this.ribbonIconEl = this.addRibbonIcon("pen-tool", t.ribbonTooltip, () => {
+      void this.toggleZenWriter().catch(() => {});
     });
   }
 
@@ -1738,10 +1738,10 @@ const I18N = {
     pickerPadding: "Picker side padding",
     pickerPaddingDesc: "Adds horizontal inset so the picker window does not touch the editor edges.",
     restoreDefault: "Restore default",
-    ribbonTooltip: "Enter zen writing mode",
-    commandToggle: "Enter/exit zen writing mode",
+    ribbonTooltip: "Enter Zen writing mode",
+    commandToggle: "Enter/exit Zen writing mode",
     showExitButton: "Show top exit button",
-    showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit zen mode.",
+    showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit Zen mode.",
   },
   zh: {
     language: "语言",
