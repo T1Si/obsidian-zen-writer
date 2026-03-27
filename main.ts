@@ -482,6 +482,8 @@ export default class ZenWriterPlugin extends Plugin {
   }
 
   public applyZenState(): void {
+    const t = I18N[this.settings.language] || I18N.en;
+
     document.body.style.setProperty("--zen-writer-max-width", this.settings.maxWidth);
     document.body.style.setProperty("--zen-writer-dim-opacity", `${this.settings.dimOpacity}`);
     document.body.style.setProperty("--zen-writer-focus-frame-height", `${this.settings.pickerFrameHeightPx}px`);
@@ -499,7 +501,7 @@ export default class ZenWriterPlugin extends Plugin {
     }
 
     if (this.statusBarItemEl) {
-      this.statusBarItemEl.textContent = this.settings.enabled ? "Zen Writer: Picker" : "Zen Writer: Off";
+      this.statusBarItemEl.textContent = this.settings.enabled ? t.statusBarOn : t.statusBarOff;
     }
 
     if (this.settings.enabled && !this.isComposing) {
@@ -1742,6 +1744,8 @@ const I18N = {
     commandToggle: "Enter/exit Zen writing mode",
     showExitButton: "Show top exit button",
     showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit Zen mode.",
+    statusBarOn: "Zen Writer: picker",
+    statusBarOff: "Zen Writer: off",
   },
   zh: {
     language: "语言",
@@ -1769,6 +1773,8 @@ const I18N = {
     commandToggle: "进入/退出禅意写作模式",
     showExitButton: "显示顶部退出按钮",
     showExitButtonDesc: "在页面顶部显示一个极浅的 'X' 图标，仅在鼠标悬停在顶部时可见，点击可退出禅意模式。",
+    statusBarOn: "Zen Writer: 聚焦中",
+    statusBarOff: "Zen Writer: 已关闭",
   }
 };
 
@@ -1786,9 +1792,7 @@ class ZenWriterSettingTab extends PluginSettingTab {
 
     containerEl.replaceChildren();
 
-    const heading = document.createElement("h2");
-    heading.textContent = "Zen Writer";
-    containerEl.appendChild(heading);
+    new Setting(containerEl).setName(this.plugin.manifest.name).setHeading();
 
     new Setting(containerEl)
       .setName(t.language)

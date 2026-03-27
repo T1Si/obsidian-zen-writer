@@ -402,6 +402,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     }
   }
   applyZenState() {
+    const t = I18N[this.settings.language] || I18N.en;
     document.body.style.setProperty("--zen-writer-max-width", this.settings.maxWidth);
     document.body.style.setProperty("--zen-writer-dim-opacity", `${this.settings.dimOpacity}`);
     document.body.style.setProperty("--zen-writer-focus-frame-height", `${this.settings.pickerFrameHeightPx}px`);
@@ -416,7 +417,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       document.body.classList.add(`zen-theme-${this.settings.themeDisplay}`);
     }
     if (this.statusBarItemEl) {
-      this.statusBarItemEl.textContent = this.settings.enabled ? "Zen Writer: Picker" : "Zen Writer: Off";
+      this.statusBarItemEl.textContent = this.settings.enabled ? t.statusBarOn : t.statusBarOff;
     }
     if (this.settings.enabled && !this.isComposing) {
       window.requestAnimationFrame(() => {
@@ -1395,7 +1396,9 @@ var I18N = {
     ribbonTooltip: "Enter Zen writing mode",
     commandToggle: "Enter/exit Zen writing mode",
     showExitButton: "Show top exit button",
-    showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit Zen mode."
+    showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit Zen mode.",
+    statusBarOn: "Zen Writer: picker",
+    statusBarOff: "Zen Writer: off"
   },
   zh: {
     language: "\u8BED\u8A00",
@@ -1422,7 +1425,9 @@ var I18N = {
     ribbonTooltip: "\u8FDB\u5165\u7985\u610F\u5199\u4F5C\u6A21\u5F0F",
     commandToggle: "\u8FDB\u5165/\u9000\u51FA\u7985\u610F\u5199\u4F5C\u6A21\u5F0F",
     showExitButton: "\u663E\u793A\u9876\u90E8\u9000\u51FA\u6309\u94AE",
-    showExitButtonDesc: "\u5728\u9875\u9762\u9876\u90E8\u663E\u793A\u4E00\u4E2A\u6781\u6D45\u7684 'X' \u56FE\u6807\uFF0C\u4EC5\u5728\u9F20\u6807\u60AC\u505C\u5728\u9876\u90E8\u65F6\u53EF\u89C1\uFF0C\u70B9\u51FB\u53EF\u9000\u51FA\u7985\u610F\u6A21\u5F0F\u3002"
+    showExitButtonDesc: "\u5728\u9875\u9762\u9876\u90E8\u663E\u793A\u4E00\u4E2A\u6781\u6D45\u7684 'X' \u56FE\u6807\uFF0C\u4EC5\u5728\u9F20\u6807\u60AC\u505C\u5728\u9876\u90E8\u65F6\u53EF\u89C1\uFF0C\u70B9\u51FB\u53EF\u9000\u51FA\u7985\u610F\u6A21\u5F0F\u3002",
+    statusBarOn: "Zen Writer: \u805A\u7126\u4E2D",
+    statusBarOff: "Zen Writer: \u5DF2\u5173\u95ED"
   }
 };
 var ZenWriterSettingTab = class extends import_obsidian.PluginSettingTab {
@@ -1434,9 +1439,7 @@ var ZenWriterSettingTab = class extends import_obsidian.PluginSettingTab {
     const { containerEl } = this;
     const t = I18N[this.plugin.settings.language] || I18N.en;
     containerEl.replaceChildren();
-    const heading = document.createElement("h2");
-    heading.textContent = "Zen Writer";
-    containerEl.appendChild(heading);
+    new import_obsidian.Setting(containerEl).setName(this.plugin.manifest.name).setHeading();
     new import_obsidian.Setting(containerEl).setName(t.language).setDesc(t.languageDesc).addDropdown(
       (dropdown) => dropdown.addOption("en", "English").addOption("zh", "\u7B80\u4F53\u4E2D\u6587").setValue(this.plugin.settings.language).onChange((value) => {
         this.plugin.settings.language = value;
