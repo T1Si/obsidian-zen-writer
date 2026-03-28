@@ -23,6 +23,20 @@ __export(main_exports, {
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
+var NOISE_SCENES = [
+  "rain",
+  "thunderstorm",
+  "campfire",
+  "stream",
+  "forest-wind",
+  "city-street",
+  "cafe",
+  "library",
+  "ocean",
+  "morning",
+  "night",
+  "wind"
+];
 var WHEEL_BROWSE_DAMPING = 0.35;
 var WHEEL_BROWSE_STOP_EPSILON_PX = 0.75;
 var WHEEL_BROWSE_MAX_MOMENTUM_PX = 320;
@@ -32,6 +46,14 @@ var FOCUS_FRAME_RESYNC_MAX_ATTEMPTS = 8;
 var PICKER_RECOVERY_DELAY_MS = 50;
 var PICKER_RECOVERY_MAX_ATTEMPTS = 20;
 var PICKER_SETTLE_FRAMES = 10;
+var TOP_DRAG_STRIP_HEIGHT_PX = 48;
+var TOP_EXIT_HINT_BAND_HEIGHT_PX = 96;
+var DEFAULT_NOISE_SCENE = "rain";
+var REMOVED_NOISE_SCENE_FALLBACKS = {
+  white: DEFAULT_NOISE_SCENE,
+  pink: DEFAULT_NOISE_SCENE,
+  brown: DEFAULT_NOISE_SCENE
+};
 var DEFAULT_SETTINGS = {
   language: "en",
   enabled: false,
@@ -43,8 +65,253 @@ var DEFAULT_SETTINGS = {
   zenLockedFile: null,
   activeLineGlow: true,
   themeDisplay: "default",
-  showExitButton: true
+  showExitButton: true,
+  noiseEnabled: false,
+  noiseType: DEFAULT_NOISE_SCENE,
+  noiseVolume: 0.25
 };
+var IA = "https://archive.org/download";
+var CB = "CampfireByTheRiverRelaxingFireplace";
+var SCENE_URLS = {
+  rain: [
+    `${IA}/${CB}/GentleRainSoundsOnWindowRainAgainstWindow.mp3`,
+    `${IA}/${CB}/SoftRain.mp3`
+  ],
+  thunderstorm: [
+    `${IA}/${CB}/RelaxingSoundsforSleepThunderstorm.mp3`,
+    `${IA}/${CB}/ThunderstormRainOnAWindowSoundThunderRainOnGlassAmbience.mp3`,
+    `${IA}/${CB}/LluviaAbundanteYtrueno.mp3`
+  ],
+  campfire: [
+    `${IA}/${CB}/CampfireByTheRiverRelaxingFireplace.mp3`,
+    `${IA}/${CB}/LakesideCampfireWithRelaxing.mp3`
+  ],
+  stream: [
+    `${IA}/${CB}/ForestCreekSoundsSleepRelaxFocusMeditation.mp3`
+  ],
+  "forest-wind": [
+    `${IA}/${CB}/WinterStormSoundHeavyBlizzardSnowstorm.mp3`
+  ],
+  "city-street": [
+    `${IA}/SSE_Library_AMBIENCE/TRAFFIC/AMBTraf_Light%20traffic%20with%20a%20few%20streetcars%3B%20voices_CS_USC.mp3`,
+    `${IA}/SSE_Library_AMBIENCE/TRAFFIC/AMBTraf_Light%20traffic%20on%20Sunset%20Blvd_CS_USC.mp3`
+  ],
+  cafe: [
+    `${IA}/453074-c-rogers-370973-waweee-coffee-shop-ambience-remastered/453074__c_rogers__370973__waweee__coffee-shop-ambience_remastered.mp3`,
+    `${IA}/SSE_Library_AMBIENCE/RESTAURANT%20%26%20BAR/AMBRest_Cafe%20ambience%3B%20good%20walla_CS_USC.mp3`
+  ],
+  library: [
+    `${IA}/aporee_14686_17127/2011062103GrimmZentrum02Lesesaal03LIMEXZERPT.mp3`,
+    `${IA}/SSE_Library_AMBIENCE/OFFICE/AMBOffc_Movement%20in%20indoor%20space%3B%20office%20or%20waiting_CS_USC.mp3`
+  ],
+  ocean: [
+    `${IA}/beachfront-ocean-waves-relaxing-nature-sounds-3-hours/Beachfront%20Ocean%20Waves%20-%20Relaxing%20Nature%20Sounds%203%20Hours.mp3`,
+    `${IA}/${CB}/RainSoundsOceanWavesAndDistantThunders.mp3`
+  ],
+  morning: [
+    `${IA}/EarlyMorningMayBirdsSinging/vogels-mei2008-5uursochtends.mp3`,
+    `${IA}/${CB}/TropicalIslandBeachAmbienceSoundOceanandSingingBirds.mp3`
+  ],
+  night: [
+    `${IA}/${CB}/CampfireByTheSeaCricketsOceanWavesNightForestRelaxing%20Fireplace.mp3`,
+    `${IA}/FORESTATNIGHTCricketsOwlsRainWindInTrees/FOREST%20AT%20NIGHT%20-%20Crickets%20Owls%20Rain%20Wind%20in%20Trees.mp3`
+  ],
+  wind: [
+    `${IA}/FORESTATNIGHTCricketsOwlsRainWindInTrees/FOREST%20AT%20NIGHT%20-%20Crickets%20Owls%20Rain%20Wind%20in%20Trees.mp3`,
+    `${IA}/${CB}/WinterStormSoundHeavyBlizzardSnowstorm.mp3`
+  ]
+};
+function normalizeNoiseScene(value) {
+  var _a;
+  if (typeof value !== "string") {
+    return DEFAULT_NOISE_SCENE;
+  }
+  if (NOISE_SCENES.includes(value)) {
+    return value;
+  }
+  return (_a = REMOVED_NOISE_SCENE_FALLBACKS[value]) != null ? _a : DEFAULT_NOISE_SCENE;
+}
+var AmbientSoundEngine = class {
+  constructor() {
+    this.audio = null;
+    this.fadeFrame = null;
+    this.stopTimer = null;
+    this._isRunning = false;
+  }
+  /** Start streaming a scene. Fades in over `fadeSec` seconds. */
+  start(scene, volume, fadeSec = 2, customUrl) {
+    this.destroyInternal();
+    const url = (customUrl == null ? void 0 : customUrl.trim()) || this.pickUrl(scene);
+    if (!url) return;
+    const audio = new Audio();
+    audio.src = url;
+    audio.loop = true;
+    audio.volume = 0;
+    audio.preload = "auto";
+    this.audio = audio;
+    this._isRunning = true;
+    void audio.play().then(() => {
+      if (this.audio !== audio) {
+        try {
+          audio.pause();
+        } catch (e) {
+        }
+        audio.src = "";
+        return;
+      }
+      this.fadeTo(Math.max(0, Math.min(1, volume)), fadeSec);
+    }).catch(() => {
+      if (this.audio !== audio) {
+        audio.src = "";
+        return;
+      }
+      const fallbackUrl = this.pickFallbackUrl(scene, url);
+      if (fallbackUrl) {
+        audio.src = fallbackUrl;
+        void audio.play().then(() => {
+          if (this.audio !== audio) {
+            try {
+              audio.pause();
+            } catch (e) {
+            }
+            audio.src = "";
+            return;
+          }
+          this.fadeTo(Math.max(0, Math.min(1, volume)), fadeSec);
+        }).catch(() => {
+          if (this.audio === audio) this.destroyInternal();
+          else audio.src = "";
+        });
+      } else {
+        if (this.audio === audio) this.destroyInternal();
+      }
+    });
+  }
+  /** Fade out and release the audio element. */
+  stop(fadeSec = 2) {
+    this.cancelFade();
+    if (this.stopTimer !== null) {
+      window.clearTimeout(this.stopTimer);
+      this.stopTimer = null;
+    }
+    const audio = this.audio;
+    this._isRunning = false;
+    if (!audio) return;
+    const startVol = audio.volume;
+    if (startVol <= 0 || fadeSec <= 0) {
+      this.releaseAudio(audio);
+      return;
+    }
+    const startTime = performance.now();
+    const durationMs = fadeSec * 1e3;
+    this.stopTimer = window.setTimeout(() => {
+      if (this.audio === audio) {
+        this.releaseAudio(audio);
+      }
+    }, durationMs + 80);
+    const tick = (now) => {
+      if (this.audio !== audio) {
+        this.fadeFrame = null;
+        return;
+      }
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / durationMs, 1);
+      audio.volume = startVol * (1 - t);
+      if (t < 1) {
+        this.fadeFrame = requestAnimationFrame(tick);
+      } else {
+        this.fadeFrame = null;
+        this.releaseAudio(audio);
+      }
+    };
+    this.fadeFrame = requestAnimationFrame(tick);
+  }
+  /** Update volume without restarting. */
+  setVolume(volume) {
+    if (!this.audio) return;
+    this.cancelFade();
+    this.audio.volume = Math.max(0, Math.min(1, volume));
+  }
+  /** Switch scene with a short cross-fade. */
+  setType(scene, volume, customUrl) {
+    if (this._isRunning) {
+      this.destroyInternal();
+      this.start(scene, volume, 0.4, customUrl);
+    }
+  }
+  /** Release all resources immediately. */
+  destroy() {
+    this.destroyInternal();
+  }
+  get isRunning() {
+    return this._isRunning;
+  }
+  // ─── internals ────────────────────────────────────────────────────────────
+  pickUrl(scene) {
+    var _a;
+    const urls = SCENE_URLS[scene];
+    return (_a = urls == null ? void 0 : urls[0]) != null ? _a : "";
+  }
+  pickFallbackUrl(scene, failedUrl) {
+    const urls = SCENE_URLS[scene];
+    const next = urls == null ? void 0 : urls.find((u) => u !== failedUrl);
+    return next != null ? next : null;
+  }
+  fadeTo(targetVol, fadeSec) {
+    if (!this.audio) return;
+    this.cancelFade();
+    const startVol = this.audio.volume;
+    const startTime = performance.now();
+    const durationMs = Math.max(fadeSec * 1e3, 50);
+    const audio = this.audio;
+    const tick = (now) => {
+      if (!this.audio || this.audio !== audio) return;
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / durationMs, 1);
+      audio.volume = startVol + (targetVol - startVol) * t;
+      if (t < 1) {
+        this.fadeFrame = requestAnimationFrame(tick);
+      } else {
+        audio.volume = targetVol;
+        this.fadeFrame = null;
+      }
+    };
+    this.fadeFrame = requestAnimationFrame(tick);
+  }
+  cancelFade() {
+    if (this.fadeFrame !== null) {
+      cancelAnimationFrame(this.fadeFrame);
+      this.fadeFrame = null;
+    }
+  }
+  destroyInternal() {
+    this.cancelFade();
+    if (this.stopTimer !== null) {
+      window.clearTimeout(this.stopTimer);
+      this.stopTimer = null;
+    }
+    if (this.audio) {
+      this.releaseAudio(this.audio);
+    }
+    this._isRunning = false;
+  }
+  releaseAudio(audio) {
+    if (this.stopTimer !== null) {
+      window.clearTimeout(this.stopTimer);
+      this.stopTimer = null;
+    }
+    try {
+      audio.pause();
+    } catch (e) {
+    }
+    audio.volume = 0;
+    audio.src = "";
+    if (this.audio === audio) {
+      this.audio = null;
+    }
+  }
+};
+var AmbientNoiseEngine = AmbientSoundEngine;
 var ZenWriterPlugin = class extends import_obsidian.Plugin {
   constructor() {
     super(...arguments);
@@ -77,8 +344,15 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     this.pickerHealthCheckInterval = null;
     this.zenExitButtonEl = null;
     this.zenExitTriggerEl = null;
+    this.zenRuntimeControlEl = null;
+    this.zenRuntimeLauncherEl = null;
+    this.zenRuntimePanelEl = null;
+    this.zenRuntimeControlOpen = false;
+    this.zenRuntimeOutsidePointerHandler = null;
+    this.runtimePanelDismissPointerTime = 0;
     this.leftSidebarWasVisible = false;
     this.rightSidebarWasVisible = false;
+    this.noiseEngine = new AmbientNoiseEngine();
     this.ribbonIconEl = null;
   }
   async onload() {
@@ -234,15 +508,21 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     this.registerDomEvent(window, "focus", () => {
       this.schedulePickerRecovery("selection");
     });
+    this.registerDomEvent(window, "mousemove", (event) => {
+      this.syncZenExitButtonVisibility(event.clientY);
+    });
     this.registerDomEvent(window, "blur", () => {
       this.rememberActiveCursor();
       this.clearPickerRecovery();
+      this.setZenExitButtonVisible(false);
+      this.setZenRuntimeControlOpen(false);
     });
     this.registerDomEvent(document, "visibilitychange", () => {
       if (document.hidden) {
         this.rememberActiveCursor();
         this.clearPickerRecovery();
         this.stopPickerHealthCheck();
+        this.setZenRuntimeControlOpen(false);
       } else {
         this.schedulePickerRecovery("selection");
         this.startPickerHealthCheck();
@@ -260,9 +540,11 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     this.clearPickerRecovery();
     this.stopPickerHealthCheck();
     this.removeZenExitButton();
+    this.removeZenRuntimeControlCenter();
     this.clearPendingProgrammaticSelection();
     this.clearPendingProgrammaticScroll();
     this.clearPickerViewScope();
+    this.noiseEngine.destroy();
     document.body.classList.remove("zen-writer-enabled");
     delete document.body.dataset.zenWriterMode;
     document.body.style.removeProperty("--zen-writer-max-width");
@@ -274,7 +556,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     document.body.style.removeProperty("--zen-writer-focus-frame-edge-bottom");
   }
   async loadSettings() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
     const rawSettings = await this.loadData() || {};
     this.settings = {
       language: (_a = rawSettings.language) != null ? _a : DEFAULT_SETTINGS.language,
@@ -287,7 +569,10 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       zenLockedFile: (_j = rawSettings.zenLockedFile) != null ? _j : DEFAULT_SETTINGS.zenLockedFile,
       activeLineGlow: (_k = rawSettings.activeLineGlow) != null ? _k : DEFAULT_SETTINGS.activeLineGlow,
       themeDisplay: (_l = rawSettings.themeDisplay) != null ? _l : DEFAULT_SETTINGS.themeDisplay,
-      showExitButton: (_m = rawSettings.showExitButton) != null ? _m : DEFAULT_SETTINGS.showExitButton
+      showExitButton: (_m = rawSettings.showExitButton) != null ? _m : DEFAULT_SETTINGS.showExitButton,
+      noiseEnabled: (_n = rawSettings.noiseEnabled) != null ? _n : DEFAULT_SETTINGS.noiseEnabled,
+      noiseType: normalizeNoiseScene(rawSettings.noiseType),
+      noiseVolume: (_o = rawSettings.noiseVolume) != null ? _o : DEFAULT_SETTINGS.noiseVolume
     };
   }
   async saveSettings() {
@@ -323,6 +608,9 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     await this.saveSettings();
     this.applyZenState();
     this.createZenExitButton();
+    if (this.settings.noiseEnabled) {
+      this.noiseEngine.start(this.settings.noiseType, this.settings.noiseVolume);
+    }
   }
   async exitZenMode() {
     this.settings.enabled = false;
@@ -334,6 +622,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       this.app.workspace.rightSplit.expand();
     }
     this.removeZenExitButton();
+    this.noiseEngine.stop();
     await this.saveSettings();
     this.applyZenState();
   }
@@ -365,6 +654,9 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     }
     const trigger = document.createElement("div");
     trigger.className = "zen-writer-exit-trigger";
+    const hotspot = document.createElement("div");
+    hotspot.className = "zen-writer-exit-hotspot";
+    trigger.appendChild(hotspot);
     document.body.appendChild(trigger);
     this.zenExitTriggerEl = trigger;
     const button = document.createElement("div");
@@ -376,10 +668,10 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     });
     document.body.appendChild(button);
     this.zenExitButtonEl = button;
-    trigger.addEventListener("mouseenter", () => {
+    hotspot.addEventListener("mouseenter", () => {
       button == null ? void 0 : button.classList.add("is-visible");
     });
-    trigger.addEventListener("mouseleave", () => {
+    hotspot.addEventListener("mouseleave", () => {
       if (button && !button.matches(":hover")) {
         button.classList.remove("is-visible");
       }
@@ -388,7 +680,9 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       button.classList.add("is-visible");
     });
     button.addEventListener("mouseleave", () => {
-      button.classList.remove("is-visible");
+      if (!hotspot.matches(":hover")) {
+        button.classList.remove("is-visible");
+      }
     });
   }
   removeZenExitButton() {
@@ -400,6 +694,342 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       this.zenExitTriggerEl.remove();
       this.zenExitTriggerEl = null;
     }
+  }
+  setZenExitButtonVisible(visible) {
+    if (!this.zenExitButtonEl) {
+      return;
+    }
+    this.zenExitButtonEl.classList.toggle("is-visible", visible);
+  }
+  syncZenExitButtonVisibility(pointerClientY) {
+    var _a;
+    if (!this.settings.enabled || !this.settings.showExitButton || !this.zenExitButtonEl) {
+      return;
+    }
+    if (pointerClientY <= TOP_EXIT_HINT_BAND_HEIGHT_PX) {
+      this.setZenExitButtonVisible(true);
+      return;
+    }
+    if (this.zenExitButtonEl.matches(":hover") || ((_a = this.zenExitTriggerEl) == null ? void 0 : _a.matches(":hover"))) {
+      return;
+    }
+    this.setZenExitButtonVisible(false);
+  }
+  getThemeOptions(t) {
+    return [
+      { value: "default", label: t.themeDefault },
+      { value: "sepia", label: t.themeSepia },
+      { value: "green", label: t.themeGreen },
+      { value: "dark", label: t.themeDark }
+    ];
+  }
+  getNoiseSceneOptions(t) {
+    return [
+      { value: "rain", label: t.noiseRain },
+      { value: "thunderstorm", label: t.noiseThunderstorm },
+      { value: "campfire", label: t.noiseCampfire },
+      { value: "stream", label: t.noiseStream },
+      { value: "forest-wind", label: t.noiseForestWind },
+      { value: "city-street", label: t.noiseCityStreet },
+      { value: "cafe", label: t.noiseCafe },
+      { value: "library", label: t.noiseLibrary },
+      { value: "ocean", label: t.noiseOcean },
+      { value: "morning", label: t.noiseMorning },
+      { value: "night", label: t.noiseNight },
+      { value: "wind", label: t.noiseWind }
+    ];
+  }
+  setZenRuntimeControlOpen(open) {
+    var _a, _b, _c;
+    this.zenRuntimeControlOpen = open;
+    (_a = this.zenRuntimeControlEl) == null ? void 0 : _a.classList.toggle("is-open", open);
+    (_b = this.zenRuntimeLauncherEl) == null ? void 0 : _b.setAttribute("aria-expanded", String(open));
+    (_c = this.zenRuntimePanelEl) == null ? void 0 : _c.setAttribute("aria-hidden", String(!open));
+  }
+  createZenRuntimeControlCenter() {
+    if (this.zenRuntimeControlEl) {
+      this.renderZenRuntimeControlPanel();
+      return;
+    }
+    const t = I18N[this.settings.language] || I18N.en;
+    const container = document.createElement("div");
+    container.className = "zen-runtime-controls";
+    const hotspot = document.createElement("div");
+    hotspot.className = "zen-runtime-hotspot";
+    const launcher = document.createElement("button");
+    launcher.type = "button";
+    launcher.className = "zen-runtime-toggle";
+    launcher.setAttribute("aria-label", t.runtimeControls);
+    launcher.setAttribute("aria-expanded", "false");
+    (0, import_obsidian.setIcon)(launcher, "sliders-horizontal");
+    launcher.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.setZenRuntimeControlOpen(!this.zenRuntimeControlOpen);
+    });
+    const panel = document.createElement("div");
+    panel.className = "zen-runtime-panel";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-label", t.runtimeControls);
+    panel.setAttribute("aria-hidden", "true");
+    container.appendChild(hotspot);
+    container.appendChild(launcher);
+    container.appendChild(panel);
+    document.body.appendChild(container);
+    this.zenRuntimeControlEl = container;
+    this.zenRuntimeLauncherEl = launcher;
+    this.zenRuntimePanelEl = panel;
+    this.zenRuntimeOutsidePointerHandler = (event) => {
+      if (!this.zenRuntimeControlOpen || !this.zenRuntimeControlEl || !(event.target instanceof Node)) {
+        return;
+      }
+      if (!this.zenRuntimeControlEl.contains(event.target)) {
+        this.setZenRuntimeControlOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", this.zenRuntimeOutsidePointerHandler, true);
+    this.renderZenRuntimeControlPanel();
+    this.setZenRuntimeControlOpen(this.zenRuntimeControlOpen);
+  }
+  removeZenRuntimeControlCenter() {
+    if (this.zenRuntimeOutsidePointerHandler) {
+      document.removeEventListener("pointerdown", this.zenRuntimeOutsidePointerHandler, true);
+      this.zenRuntimeOutsidePointerHandler = null;
+    }
+    if (this.zenRuntimeControlEl) {
+      this.zenRuntimeControlEl.remove();
+      this.zenRuntimeControlEl = null;
+    }
+    this.zenRuntimeLauncherEl = null;
+    this.zenRuntimePanelEl = null;
+    this.zenRuntimeControlOpen = false;
+  }
+  isZenRuntimeControlTarget(target) {
+    var _a;
+    return target instanceof Node && !!((_a = this.zenRuntimeControlEl) == null ? void 0 : _a.contains(target));
+  }
+  renderZenRuntimeControlPanel() {
+    var _a;
+    if (!this.zenRuntimePanelEl) {
+      return;
+    }
+    const t = I18N[this.settings.language] || I18N.en;
+    const panel = this.zenRuntimePanelEl;
+    panel.replaceChildren();
+    panel.setAttribute("aria-label", t.runtimeControls);
+    (_a = this.zenRuntimeLauncherEl) == null ? void 0 : _a.setAttribute("aria-label", t.runtimeControls);
+    const header = document.createElement("div");
+    header.className = "zen-runtime-header";
+    const title = document.createElement("div");
+    title.className = "zen-runtime-title";
+    title.textContent = t.runtimeControls;
+    header.appendChild(title);
+    panel.appendChild(header);
+    const appearanceSection = document.createElement("section");
+    appearanceSection.className = "zen-runtime-section";
+    const appearanceHeading = document.createElement("div");
+    appearanceHeading.className = "zen-runtime-section-title";
+    appearanceHeading.textContent = t.runtimePaper;
+    appearanceSection.appendChild(appearanceHeading);
+    const themeGrid = document.createElement("div");
+    themeGrid.className = "zen-runtime-theme-grid";
+    for (const option of this.getThemeOptions(t)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "zen-runtime-theme-option";
+      if (this.settings.themeDisplay === option.value) {
+        button.classList.add("is-active");
+      }
+      button.dataset.theme = option.value;
+      button.setAttribute("aria-pressed", String(this.settings.themeDisplay === option.value));
+      button.addEventListener("click", () => {
+        if (this.settings.themeDisplay === option.value) {
+          return;
+        }
+        this.settings.themeDisplay = option.value;
+        this.renderZenRuntimeControlPanel();
+        void this.saveSettings().catch(() => {
+        });
+      });
+      const swatch = document.createElement("span");
+      swatch.className = "zen-runtime-theme-swatch";
+      button.appendChild(swatch);
+      const label = document.createElement("span");
+      label.className = "zen-runtime-theme-label";
+      label.textContent = option.label;
+      button.appendChild(label);
+      themeGrid.appendChild(button);
+    }
+    appearanceSection.appendChild(themeGrid);
+    panel.appendChild(appearanceSection);
+    const ambientSection = document.createElement("section");
+    ambientSection.className = "zen-runtime-section";
+    const ambientTopRow = document.createElement("div");
+    ambientTopRow.className = "zen-runtime-row";
+    const ambientHeading = document.createElement("div");
+    ambientHeading.className = "zen-runtime-section-title";
+    ambientHeading.textContent = t.runtimeAmbient;
+    ambientTopRow.appendChild(ambientHeading);
+    const ambientToggle = document.createElement("button");
+    ambientToggle.type = "button";
+    ambientToggle.className = "zen-runtime-switch";
+    ambientToggle.classList.toggle("is-active", this.settings.noiseEnabled);
+    ambientToggle.setAttribute("aria-pressed", String(this.settings.noiseEnabled));
+    ambientToggle.textContent = this.settings.noiseEnabled ? t.runtimeOn : t.runtimeOff;
+    ambientToggle.addEventListener("click", () => {
+      const nextEnabled = !this.settings.noiseEnabled;
+      this.settings.noiseEnabled = nextEnabled;
+      if (nextEnabled) {
+        this.noiseEngine.start(this.settings.noiseType, this.settings.noiseVolume);
+      } else {
+        this.noiseEngine.stop(0.8);
+      }
+      this.renderZenRuntimeControlPanel();
+      void this.saveSettings().catch(() => {
+      });
+    });
+    ambientTopRow.appendChild(ambientToggle);
+    ambientSection.appendChild(ambientTopRow);
+    if (this.settings.noiseEnabled) {
+      const sceneRow = document.createElement("label");
+      sceneRow.className = "zen-runtime-stack";
+      const sceneLabel = document.createElement("span");
+      sceneLabel.className = "zen-runtime-label";
+      sceneLabel.textContent = t.runtimeScene;
+      sceneRow.appendChild(sceneLabel);
+      const select = document.createElement("select");
+      select.className = "zen-runtime-select";
+      for (const option of this.getNoiseSceneOptions(t)) {
+        const optionEl = document.createElement("option");
+        optionEl.value = option.value;
+        optionEl.textContent = option.label;
+        optionEl.selected = this.settings.noiseType === option.value;
+        select.appendChild(optionEl);
+      }
+      select.addEventListener("change", () => {
+        const nextScene = normalizeNoiseScene(select.value);
+        if (nextScene === this.settings.noiseType) {
+          return;
+        }
+        this.settings.noiseType = nextScene;
+        this.noiseEngine.setType(nextScene, this.settings.noiseVolume);
+        void this.saveSettings().catch(() => {
+        });
+      });
+      sceneRow.appendChild(select);
+      ambientSection.appendChild(sceneRow);
+      const volumeRow = document.createElement("div");
+      volumeRow.className = "zen-runtime-stack";
+      const volumeHeader = document.createElement("div");
+      volumeHeader.className = "zen-runtime-row";
+      const volumeLabel = document.createElement("span");
+      volumeLabel.className = "zen-runtime-label";
+      volumeLabel.textContent = t.runtimeVolume;
+      const volumeValue = document.createElement("span");
+      volumeValue.className = "zen-runtime-value";
+      volumeValue.textContent = `${Math.round(this.settings.noiseVolume * 100)}%`;
+      volumeHeader.appendChild(volumeLabel);
+      volumeHeader.appendChild(volumeValue);
+      volumeRow.appendChild(volumeHeader);
+      const sliderShell = document.createElement("div");
+      sliderShell.className = "zen-runtime-slider";
+      const sliderTrack = document.createElement("div");
+      sliderTrack.className = "zen-runtime-slider-track";
+      const sliderFill = document.createElement("div");
+      sliderFill.className = "zen-runtime-slider-fill";
+      sliderTrack.appendChild(sliderFill);
+      const sliderThumb = document.createElement("div");
+      sliderThumb.className = "zen-runtime-slider-thumb";
+      const slider = document.createElement("input");
+      slider.className = "zen-runtime-slider-input";
+      slider.type = "range";
+      slider.min = "0.05";
+      slider.max = "1";
+      slider.step = "0.05";
+      slider.value = String(this.settings.noiseVolume);
+      slider.setAttribute("aria-label", t.runtimeVolume);
+      const updateSliderVisual = (value) => {
+        const min = Number(slider.min);
+        const max = Number(slider.max);
+        const percent = max > min ? (value - min) / (max - min) * 100 : 0;
+        sliderShell.style.setProperty("--zen-runtime-slider-percent", `${Math.max(0, Math.min(100, percent))}%`);
+        volumeValue.textContent = `${Math.round(value * 100)}%`;
+      };
+      const snapSliderValue = (value) => {
+        const min = Number(slider.min);
+        const max = Number(slider.max);
+        const step = Number(slider.step) || 0.05;
+        const snapped = min + Math.round((value - min) / step) * step;
+        return Math.max(min, Math.min(max, Number(snapped.toFixed(2))));
+      };
+      const applyVolume = (value, persist) => {
+        const nextVolume = snapSliderValue(value);
+        slider.value = String(nextVolume);
+        this.settings.noiseVolume = nextVolume;
+        this.noiseEngine.setVolume(nextVolume);
+        updateSliderVisual(nextVolume);
+        if (persist) {
+          void this.saveSettings().catch(() => {
+          });
+        }
+      };
+      let activePointerId = null;
+      const updateVolumeFromClientX = (clientX, persist) => {
+        const rect = sliderTrack.getBoundingClientRect();
+        if (!rect.width) {
+          return;
+        }
+        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        const min = Number(slider.min);
+        const max = Number(slider.max);
+        const value = min + ratio * (max - min);
+        applyVolume(value, persist);
+      };
+      updateSliderVisual(this.settings.noiseVolume);
+      slider.addEventListener("input", () => {
+        applyVolume(Number(slider.value), false);
+      });
+      slider.addEventListener("change", () => {
+        applyVolume(Number(slider.value), true);
+      });
+      sliderShell.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        activePointerId = event.pointerId;
+        sliderShell.setPointerCapture(event.pointerId);
+        updateVolumeFromClientX(event.clientX, false);
+      });
+      sliderShell.addEventListener("pointermove", (event) => {
+        if (activePointerId !== event.pointerId) {
+          return;
+        }
+        updateVolumeFromClientX(event.clientX, false);
+      });
+      sliderShell.addEventListener("pointerup", (event) => {
+        if (activePointerId !== event.pointerId) {
+          return;
+        }
+        updateVolumeFromClientX(event.clientX, true);
+        sliderShell.releasePointerCapture(event.pointerId);
+        activePointerId = null;
+      });
+      sliderShell.addEventListener("pointercancel", (event) => {
+        if (activePointerId !== event.pointerId) {
+          return;
+        }
+        sliderShell.releasePointerCapture(event.pointerId);
+        activePointerId = null;
+      });
+      sliderShell.appendChild(sliderTrack);
+      sliderShell.appendChild(sliderThumb);
+      sliderShell.appendChild(slider);
+      volumeRow.appendChild(sliderShell);
+      ambientSection.appendChild(volumeRow);
+    }
+    panel.appendChild(ambientSection);
   }
   applyZenState() {
     const t = I18N[this.settings.language] || I18N.en;
@@ -425,6 +1055,8 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
         this.schedulePickerRecovery("selection");
         this.startPickerHealthCheck();
       });
+      this.syncNoiseState();
+      this.createZenRuntimeControlCenter();
     } else {
       this.clearCenterTimer();
       this.clearViewportRefreshFrame();
@@ -439,6 +1071,24 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       this.clearPickerViewScope();
       this.clearFocusFrameEdgeSpacing();
       this.clearFocusFrameResync();
+      this.removeZenRuntimeControlCenter();
+    }
+  }
+  /** Sync noise engine state with current settings (called from applyZenState). */
+  syncNoiseState() {
+    if (!this.settings.enabled) {
+      return;
+    }
+    if (!this.settings.noiseEnabled) {
+      if (this.noiseEngine.isRunning) {
+        this.noiseEngine.stop();
+      }
+      return;
+    }
+    if (!this.noiseEngine.isRunning) {
+      this.noiseEngine.start(this.settings.noiseType, this.settings.noiseVolume);
+    } else {
+      this.noiseEngine.setVolume(this.settings.noiseVolume);
     }
   }
   scheduleViewportRefresh(trigger) {
@@ -1130,6 +1780,30 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     if (event.button !== 0) {
       return;
     }
+    if (event.type === "mousedown" && Date.now() - this.runtimePanelDismissPointerTime < 100) {
+      this.runtimePanelDismissPointerTime = 0;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      return;
+    }
+    if (this.zenRuntimeControlOpen && !this.isZenRuntimeControlTarget(event.target)) {
+      if (event.type === "pointerdown") {
+        this.runtimePanelDismissPointerTime = Date.now();
+      }
+      this.setZenRuntimeControlOpen(false);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      return;
+    }
+    if (this.isZenRuntimeControlTarget(event.target)) {
+      return;
+    }
+    if (event.clientY <= TOP_DRAG_STRIP_HEIGHT_PX) {
+      this.setZenExitButtonVisible(this.settings.showExitButton);
+      return;
+    }
     if (event.type === "mousedown" && Date.now() - this.lastPointerDownTime < 100) {
       const physicalAnchor2 = window.innerHeight * 0.5;
       const clickY2 = event.clientY;
@@ -1397,6 +2071,34 @@ var I18N = {
     commandToggle: "Enter/exit Zen writing mode",
     showExitButton: "Show top exit button",
     showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit Zen mode.",
+    runtimeControls: "Zen controls",
+    runtimePaper: "Paper",
+    runtimeAmbient: "Ambient",
+    runtimeScene: "Scene",
+    runtimeVolume: "Volume",
+    runtimeOn: "On",
+    runtimeOff: "Off",
+    noiseEnabled: "Ambient sound",
+    noiseEnabledDesc: "Play a gentle background sound to help you stay in flow while writing.",
+    noiseType: "Sound scene",
+    noiseTypeDesc: "Choose the synthesized ambient scene. All sounds are generated in real-time \u2014 no audio files.",
+    noiseRain: "\u{1F327}\uFE0F  Rain",
+    noiseThunderstorm: "\u26C8\uFE0F  Thunderstorm",
+    noiseCampfire: "\u{1F525}  Campfire",
+    noiseStream: "\u{1F4A7}  Stream",
+    noiseForestWind: "\u{1F332}  Forest wind",
+    noiseCityStreet: "\u{1F3D9}\uFE0F  City street",
+    noiseCafe: "\u2615  Coffee shop",
+    noiseLibrary: "\u{1F4DA}  Library",
+    noiseOcean: "\u{1F30A}  Ocean waves",
+    noiseMorning: "\u{1F305}  Morning birds",
+    noiseNight: "\u{1F319}  Night crickets",
+    noiseWind: "\u{1F32C}\uFE0F  Open wind",
+    noiseWhite: "\u25FB\uFE0F  White noise",
+    noisePink: "\u{1F7EA}  Pink noise",
+    noiseBrown: "\u{1F7EB}  Brown noise",
+    noiseVolume: "Volume",
+    noiseVolumeDesc: "Adjust the volume of the ambient sound.",
     statusBarOn: "Zen Writer: picker",
     statusBarOff: "Zen Writer: off"
   },
@@ -1406,9 +2108,9 @@ var I18N = {
     themeDisplay: "\u7F16\u8F91\u5668\u7EB8\u5F20\u80CC\u666F",
     themeDisplayDesc: "\u9009\u62E9\u4EE4\u4F60\u8212\u9002\u7684\u6C89\u6D78\u5F0F\u80CC\u666F\u5E95\u8272\u8C03\u8272\u677F\u3002",
     themeDefault: "\u7CFB\u7EDF\u9ED8\u8BA4",
-    themeSepia: "\u62A4\u773C\u9EC4 (Sepia)",
-    themeGreen: "\u62A4\u773C\u7EFF (Green)",
-    themeDark: "\u6DF1\u7070\u591C\u95F4 (Dark)",
+    themeSepia: "\u62A4\u773C\u9EC4",
+    themeGreen: "\u62A4\u773C\u7EFF",
+    themeDark: "\u6DF1\u7070\u591C\u95F4",
     activeLineGlow: "\u542F\u7528\u5F53\u524D\u884C\u80CC\u666F",
     activeLineGlowDesc: "\u4F7F\u7528\u5FAE\u5F31\u7684\u80CC\u666F\u6765\u663E\u793A\u5F53\u524D\u5149\u6807\u6240\u5728\u884C\u3002",
     contentWidth: "\u6B63\u6587\u5185\u5BB9\u6700\u5927\u5BBD\u5EA6",
@@ -1426,6 +2128,34 @@ var I18N = {
     commandToggle: "\u8FDB\u5165/\u9000\u51FA\u7985\u610F\u5199\u4F5C\u6A21\u5F0F",
     showExitButton: "\u663E\u793A\u9876\u90E8\u9000\u51FA\u6309\u94AE",
     showExitButtonDesc: "\u5728\u9875\u9762\u9876\u90E8\u663E\u793A\u4E00\u4E2A\u6781\u6D45\u7684 'X' \u56FE\u6807\uFF0C\u4EC5\u5728\u9F20\u6807\u60AC\u505C\u5728\u9876\u90E8\u65F6\u53EF\u89C1\uFF0C\u70B9\u51FB\u53EF\u9000\u51FA\u7985\u610F\u6A21\u5F0F\u3002",
+    runtimeControls: "\u7985\u610F\u63A7\u5236",
+    runtimePaper: "\u7EB8\u5F20",
+    runtimeAmbient: "\u73AF\u5883\u97F3",
+    runtimeScene: "\u573A\u666F",
+    runtimeVolume: "\u97F3\u91CF",
+    runtimeOn: "\u5F00\u542F",
+    runtimeOff: "\u5173\u95ED",
+    noiseEnabled: "\u73AF\u5883\u97F3",
+    noiseEnabledDesc: "\u8FDB\u5165\u7985\u610F\u6A21\u5F0F\u65F6\u64AD\u653E\u5408\u6210\u7684\u573A\u666F\u97F3\u6548\uFF0C\u5E2E\u52A9\u4F60\u66F4\u5FEB\u8FDB\u5165\u5FC3\u6D41\u72B6\u6001\u3002",
+    noiseType: "\u58F0\u97F3\u573A\u666F",
+    noiseTypeDesc: "\u9009\u62E9\u8981\u5408\u6210\u7684\u73AF\u5883\u97F3\u573A\u666F\uFF0C\u6240\u6709\u58F0\u97F3\u5747\u5B9E\u65F6\u751F\u6210\uFF0C\u65E0\u9700\u97F3\u9891\u6587\u4EF6\u3002",
+    noiseRain: "\u{1F327}\uFE0F  \u96E8\u58F0",
+    noiseThunderstorm: "\u26C8\uFE0F  \u96F7\u66B4",
+    noiseCampfire: "\u{1F525}  \u7BDD\u706B",
+    noiseStream: "\u{1F4A7}  \u6EAA\u6D41",
+    noiseForestWind: "\u{1F332}  \u68EE\u6797\u98CE\u58F0",
+    noiseCityStreet: "\u{1F3D9}\uFE0F  \u57CE\u5E02\u8857\u9053",
+    noiseCafe: "\u2615  \u5496\u5561\u9986",
+    noiseLibrary: "\u{1F4DA}  \u56FE\u4E66\u9986",
+    noiseOcean: "\u{1F30A}  \u6D77\u6D6A",
+    noiseMorning: "\u{1F305}  \u6668\u95F4\u9E1F\u9E23",
+    noiseNight: "\u{1F319}  \u591C\u665A\u866B\u9E23",
+    noiseWind: "\u{1F32C}\uFE0F  \u65F7\u91CE\u98CE\u58F0",
+    noiseWhite: "\u25FB\uFE0F  \u767D\u566A\u97F3",
+    noisePink: "\u{1F7EA}  \u7C89\u566A\u97F3",
+    noiseBrown: "\u{1F7EB}  \u68D5\u566A\u97F3",
+    noiseVolume: "\u97F3\u91CF",
+    noiseVolumeDesc: "\u8C03\u8282\u73AF\u5883\u97F3\u7684\u64AD\u653E\u97F3\u91CF\u3002",
     statusBarOn: "Zen Writer: \u805A\u7126\u4E2D",
     statusBarOff: "Zen Writer: \u5DF2\u5173\u95ED"
   }
@@ -1555,5 +2285,50 @@ var ZenWriterSettingTab = class extends import_obsidian.PluginSettingTab {
         });
       })
     );
+    new import_obsidian.Setting(containerEl).setName(t.noiseEnabled).setHeading();
+    new import_obsidian.Setting(containerEl).setName(t.noiseEnabled).setDesc(t.noiseEnabledDesc).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.noiseEnabled).onChange((value) => {
+        this.plugin.settings.noiseEnabled = value;
+        if (!value) {
+          this.plugin.noiseEngine.destroy();
+        }
+        void (async () => {
+          await this.plugin.saveSettings();
+          this.display();
+        })().catch(() => {
+        });
+      })
+    );
+    if (this.plugin.settings.noiseEnabled) {
+      new import_obsidian.Setting(containerEl).setName(t.noiseType).setDesc(t.noiseTypeDesc).addDropdown(
+        (dropdown) => dropdown.addOption("rain", t.noiseRain).addOption("thunderstorm", t.noiseThunderstorm).addOption("campfire", t.noiseCampfire).addOption("stream", t.noiseStream).addOption("forest-wind", t.noiseForestWind).addOption("city-street", t.noiseCityStreet).addOption("cafe", t.noiseCafe).addOption("library", t.noiseLibrary).addOption("ocean", t.noiseOcean).addOption("morning", t.noiseMorning).addOption("night", t.noiseNight).addOption("wind", t.noiseWind).setValue(this.plugin.settings.noiseType).onChange((value) => {
+          const changed = this.plugin.settings.noiseType !== value;
+          this.plugin.settings.noiseType = value;
+          if (changed) {
+            this.plugin.noiseEngine.setType(value, this.plugin.settings.noiseVolume);
+          }
+          void this.plugin.saveSettings().catch(() => {
+          });
+        })
+      );
+      new import_obsidian.Setting(containerEl).setName(t.noiseVolume).setDesc(t.noiseVolumeDesc).addSlider(
+        (slider) => slider.setLimits(0.05, 1, 0.05).setValue(this.plugin.settings.noiseVolume).setDynamicTooltip().onChange((value) => {
+          this.plugin.settings.noiseVolume = value;
+          this.plugin.noiseEngine.setVolume(value);
+          void this.plugin.saveSettings().catch(() => {
+          });
+        })
+      ).addExtraButton(
+        (button) => button.setIcon("reset").setTooltip(t.restoreDefault).onClick(() => {
+          this.plugin.settings.noiseVolume = DEFAULT_SETTINGS.noiseVolume;
+          this.plugin.noiseEngine.setVolume(DEFAULT_SETTINGS.noiseVolume);
+          void (async () => {
+            await this.plugin.saveSettings();
+            this.display();
+          })().catch(() => {
+          });
+        })
+      );
+    }
   }
 };

@@ -3,6 +3,22 @@ import { MarkdownView, Plugin, PluginSettingTab, Setting, TFile, setIcon } from 
 type ZenWriterCenterTrigger = "typing" | "navigation" | "pointer" | "open" | "resize" | "selection" | "wheel";
 type EditorCursor = { line: number; ch: number };
 type RectLike = { top: number; bottom: number; left: number; right: number };
+const NOISE_SCENES = [
+  "rain",
+  "thunderstorm",
+  "campfire",
+  "stream",
+  "forest-wind",
+  "city-street",
+  "cafe",
+  "library",
+  "ocean",
+  "morning",
+  "night",
+  "wind",
+] as const;
+type NoiseScene = (typeof NOISE_SCENES)[number];
+type LegacyNoiseScene = "white" | "pink" | "brown";
 
 interface CodeMirrorViewLike {
   posAtCoords(coords: { x: number; y: number }): number | null;
@@ -18,6 +34,14 @@ const FOCUS_FRAME_RESYNC_MAX_ATTEMPTS = 8;
 const PICKER_RECOVERY_DELAY_MS = 50;
 const PICKER_RECOVERY_MAX_ATTEMPTS = 20;
 const PICKER_SETTLE_FRAMES = 10;
+const TOP_DRAG_STRIP_HEIGHT_PX = 48;
+const TOP_EXIT_HINT_BAND_HEIGHT_PX = 96;
+const DEFAULT_NOISE_SCENE: NoiseScene = "rain";
+const REMOVED_NOISE_SCENE_FALLBACKS: Record<LegacyNoiseScene, NoiseScene> = {
+  white: DEFAULT_NOISE_SCENE,
+  pink: DEFAULT_NOISE_SCENE,
+  brown: DEFAULT_NOISE_SCENE,
+};
 
 interface ZenWriterSettings {
   language: "en" | "zh";
@@ -31,6 +55,9 @@ interface ZenWriterSettings {
   activeLineGlow: boolean;
   themeDisplay: "default" | "sepia" | "green" | "dark";
   showExitButton: boolean;
+  noiseEnabled: boolean;
+  noiseType: NoiseScene;
+  noiseVolume: number;
 }
 
 const DEFAULT_SETTINGS: ZenWriterSettings = {
@@ -45,7 +72,283 @@ const DEFAULT_SETTINGS: ZenWriterSettings = {
   activeLineGlow: true,
   themeDisplay: "default",
   showExitButton: true,
+  noiseEnabled: false,
+  noiseType: DEFAULT_NOISE_SCENE,
+  noiseVolume: 0.25,
 };
+
+
+// ─── Archive.org ambient sound URLs (all public domain / CC0) ────────────────
+// Base: https://archive.org/download/{identifier}/{filename}
+const IA = "https://archive.org/download";
+const CB = "CampfireByTheRiverRelaxingFireplace";  // Rich nature sounds collection
+
+const SCENE_URLS: Record<NoiseScene, string[]> = {
+  rain: [
+    `${IA}/${CB}/GentleRainSoundsOnWindowRainAgainstWindow.mp3`,
+    `${IA}/${CB}/SoftRain.mp3`,
+  ],
+  thunderstorm: [
+    `${IA}/${CB}/RelaxingSoundsforSleepThunderstorm.mp3`,
+    `${IA}/${CB}/ThunderstormRainOnAWindowSoundThunderRainOnGlassAmbience.mp3`,
+    `${IA}/${CB}/LluviaAbundanteYtrueno.mp3`,
+  ],
+  campfire: [
+    `${IA}/${CB}/CampfireByTheRiverRelaxingFireplace.mp3`,
+    `${IA}/${CB}/LakesideCampfireWithRelaxing.mp3`,
+  ],
+  stream: [
+    `${IA}/${CB}/ForestCreekSoundsSleepRelaxFocusMeditation.mp3`,
+  ],
+  "forest-wind": [
+    `${IA}/${CB}/WinterStormSoundHeavyBlizzardSnowstorm.mp3`,
+  ],
+  "city-street": [
+    `${IA}/SSE_Library_AMBIENCE/TRAFFIC/AMBTraf_Light%20traffic%20with%20a%20few%20streetcars%3B%20voices_CS_USC.mp3`,
+    `${IA}/SSE_Library_AMBIENCE/TRAFFIC/AMBTraf_Light%20traffic%20on%20Sunset%20Blvd_CS_USC.mp3`,
+  ],
+  cafe: [
+    `${IA}/453074-c-rogers-370973-waweee-coffee-shop-ambience-remastered/453074__c_rogers__370973__waweee__coffee-shop-ambience_remastered.mp3`,
+    `${IA}/SSE_Library_AMBIENCE/RESTAURANT%20%26%20BAR/AMBRest_Cafe%20ambience%3B%20good%20walla_CS_USC.mp3`,
+  ],
+  library: [
+    `${IA}/aporee_14686_17127/2011062103GrimmZentrum02Lesesaal03LIMEXZERPT.mp3`,
+    `${IA}/SSE_Library_AMBIENCE/OFFICE/AMBOffc_Movement%20in%20indoor%20space%3B%20office%20or%20waiting_CS_USC.mp3`,
+  ],
+  ocean: [
+    `${IA}/beachfront-ocean-waves-relaxing-nature-sounds-3-hours/Beachfront%20Ocean%20Waves%20-%20Relaxing%20Nature%20Sounds%203%20Hours.mp3`,
+    `${IA}/${CB}/RainSoundsOceanWavesAndDistantThunders.mp3`,
+  ],
+  morning: [
+    `${IA}/EarlyMorningMayBirdsSinging/vogels-mei2008-5uursochtends.mp3`,
+    `${IA}/${CB}/TropicalIslandBeachAmbienceSoundOceanandSingingBirds.mp3`,
+  ],
+  night: [
+    `${IA}/${CB}/CampfireByTheSeaCricketsOceanWavesNightForestRelaxing%20Fireplace.mp3`,
+    `${IA}/FORESTATNIGHTCricketsOwlsRainWindInTrees/FOREST%20AT%20NIGHT%20-%20Crickets%20Owls%20Rain%20Wind%20in%20Trees.mp3`,
+  ],
+  wind: [
+    `${IA}/FORESTATNIGHTCricketsOwlsRainWindInTrees/FOREST%20AT%20NIGHT%20-%20Crickets%20Owls%20Rain%20Wind%20in%20Trees.mp3`,
+    `${IA}/${CB}/WinterStormSoundHeavyBlizzardSnowstorm.mp3`,
+  ],
+};
+
+function normalizeNoiseScene(value: unknown): NoiseScene {
+  if (typeof value !== "string") {
+    return DEFAULT_NOISE_SCENE;
+  }
+
+  if ((NOISE_SCENES as readonly string[]).includes(value)) {
+    return value as NoiseScene;
+  }
+
+  return REMOVED_NOISE_SCENE_FALLBACKS[value as LegacyNoiseScene] ?? DEFAULT_NOISE_SCENE;
+}
+
+class AmbientSoundEngine {
+  private audio: HTMLAudioElement | null = null;
+  private fadeFrame: number | null = null;
+  private stopTimer: number | null = null;
+  private _isRunning = false;
+
+  /** Start streaming a scene. Fades in over `fadeSec` seconds. */
+  start(scene: NoiseScene, volume: number, fadeSec = 2, customUrl?: string): void {
+    this.destroyInternal();
+    const url = customUrl?.trim() || this.pickUrl(scene);
+    if (!url) return;
+
+    const audio = new Audio();
+    audio.src = url;
+    audio.loop = true;
+    audio.volume = 0;
+    audio.preload = "auto";
+    this.audio = audio;
+    this._isRunning = true;
+
+    void audio.play().then(() => {
+      // Guard: if stop() was called before play() resolved, abort
+      if (this.audio !== audio) {
+        try { audio.pause(); } catch { /* ignore */ }
+        audio.src = "";
+        return;
+      }
+      this.fadeTo(Math.max(0, Math.min(1, volume)), fadeSec);
+    }).catch(() => {
+      // Guard: if stop() called and pause() interrupted play(), do NOT restart
+      if (this.audio !== audio) {
+        audio.src = "";
+        return;
+      }
+      // Try fallback URL if primary fails for a real network reason
+      const fallbackUrl = this.pickFallbackUrl(scene, url);
+      if (fallbackUrl) {
+        audio.src = fallbackUrl;
+        void audio.play().then(() => {
+          if (this.audio !== audio) {
+            try { audio.pause(); } catch { /* ignore */ }
+            audio.src = "";
+            return;
+          }
+          this.fadeTo(Math.max(0, Math.min(1, volume)), fadeSec);
+        }).catch(() => {
+          if (this.audio === audio) this.destroyInternal();
+          else audio.src = "";
+        });
+      } else {
+        if (this.audio === audio) this.destroyInternal();
+      }
+    });
+  }
+
+  /** Fade out and release the audio element. */
+  stop(fadeSec = 2): void {
+    this.cancelFade();
+    if (this.stopTimer !== null) {
+      window.clearTimeout(this.stopTimer);
+      this.stopTimer = null;
+    }
+
+    const audio = this.audio;
+    this._isRunning = false;
+
+    if (!audio) return;
+
+    const startVol = audio.volume;
+    if (startVol <= 0 || fadeSec <= 0) {
+      this.releaseAudio(audio);
+      return;
+    }
+
+    const startTime = performance.now();
+    const durationMs = fadeSec * 1000;
+    this.stopTimer = window.setTimeout(() => {
+      if (this.audio === audio) {
+        this.releaseAudio(audio);
+      }
+    }, durationMs + 80);
+
+    const tick = (now: number) => {
+      if (this.audio !== audio) {
+        this.fadeFrame = null;
+        return;
+      }
+
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / durationMs, 1);
+      audio.volume = startVol * (1 - t);
+      if (t < 1) {
+        this.fadeFrame = requestAnimationFrame(tick);
+      } else {
+        this.fadeFrame = null;
+        this.releaseAudio(audio);
+      }
+    };
+
+    this.fadeFrame = requestAnimationFrame(tick);
+  }
+
+  /** Update volume without restarting. */
+  setVolume(volume: number): void {
+    if (!this.audio) return;
+    this.cancelFade();
+    this.audio.volume = Math.max(0, Math.min(1, volume));
+  }
+
+  /** Switch scene with a short cross-fade. */
+  setType(scene: NoiseScene, volume: number, customUrl?: string): void {
+    if (this._isRunning) {
+      this.destroyInternal();
+      this.start(scene, volume, 0.4, customUrl);
+    }
+  }
+
+  /** Release all resources immediately. */
+  destroy(): void {
+    this.destroyInternal();
+  }
+
+  get isRunning(): boolean {
+    return this._isRunning;
+  }
+
+  // ─── internals ────────────────────────────────────────────────────────────
+
+  private pickUrl(scene: NoiseScene): string {
+    const urls = SCENE_URLS[scene];
+    return urls?.[0] ?? "";
+  }
+
+  private pickFallbackUrl(scene: NoiseScene, failedUrl: string): string | null {
+    const urls = SCENE_URLS[scene];
+    const next = urls?.find(u => u !== failedUrl);
+    return next ?? null;
+  }
+
+  private fadeTo(targetVol: number, fadeSec: number): void {
+    if (!this.audio) return;
+    this.cancelFade();
+    const startVol = this.audio.volume;
+    const startTime = performance.now();
+    const durationMs = Math.max(fadeSec * 1000, 50);
+    const audio = this.audio;
+
+    const tick = (now: number) => {
+      if (!this.audio || this.audio !== audio) return;
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / durationMs, 1);
+      audio.volume = startVol + (targetVol - startVol) * t;
+      if (t < 1) {
+        this.fadeFrame = requestAnimationFrame(tick);
+      } else {
+        audio.volume = targetVol;
+        this.fadeFrame = null;
+      }
+    };
+
+    this.fadeFrame = requestAnimationFrame(tick);
+  }
+
+  private cancelFade(): void {
+    if (this.fadeFrame !== null) {
+      cancelAnimationFrame(this.fadeFrame);
+      this.fadeFrame = null;
+    }
+  }
+
+  private destroyInternal(): void {
+    this.cancelFade();
+    if (this.stopTimer !== null) {
+      window.clearTimeout(this.stopTimer);
+      this.stopTimer = null;
+    }
+    if (this.audio) {
+      this.releaseAudio(this.audio);
+    }
+    this._isRunning = false;
+  }
+
+  private releaseAudio(audio: HTMLAudioElement): void {
+    if (this.stopTimer !== null) {
+      window.clearTimeout(this.stopTimer);
+      this.stopTimer = null;
+    }
+
+    try { audio.pause(); } catch { /* ignore */ }
+    audio.volume = 0;
+    audio.src = "";
+
+    if (this.audio === audio) {
+      this.audio = null;
+    }
+  }
+}
+
+// Keep alias for internal references
+const AmbientNoiseEngine = AmbientSoundEngine;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+type AmbientNoiseEngine = AmbientSoundEngine;
+
+
 
 export default class ZenWriterPlugin extends Plugin {
   settings: ZenWriterSettings = DEFAULT_SETTINGS;
@@ -77,8 +380,15 @@ export default class ZenWriterPlugin extends Plugin {
   private pickerHealthCheckInterval: number | null = null;
   private zenExitButtonEl: HTMLElement | null = null;
   private zenExitTriggerEl: HTMLElement | null = null;
+  private zenRuntimeControlEl: HTMLElement | null = null;
+  private zenRuntimeLauncherEl: HTMLButtonElement | null = null;
+  private zenRuntimePanelEl: HTMLElement | null = null;
+  private zenRuntimeControlOpen = false;
+  private zenRuntimeOutsidePointerHandler: ((event: PointerEvent) => void) | null = null;
+  private runtimePanelDismissPointerTime = 0;
   private leftSidebarWasVisible = false;
   private rightSidebarWasVisible = false;
+  readonly noiseEngine = new AmbientNoiseEngine();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -268,9 +578,15 @@ export default class ZenWriterPlugin extends Plugin {
       this.schedulePickerRecovery("selection");
     });
 
+    this.registerDomEvent(window, "mousemove", (event: MouseEvent) => {
+      this.syncZenExitButtonVisibility(event.clientY);
+    });
+
     this.registerDomEvent(window, "blur", () => {
       this.rememberActiveCursor();
       this.clearPickerRecovery();
+      this.setZenExitButtonVisible(false);
+      this.setZenRuntimeControlOpen(false);
     });
 
     this.registerDomEvent(document, "visibilitychange", () => {
@@ -278,6 +594,7 @@ export default class ZenWriterPlugin extends Plugin {
         this.rememberActiveCursor();
         this.clearPickerRecovery();
         this.stopPickerHealthCheck();
+        this.setZenRuntimeControlOpen(false);
       } else {
         this.schedulePickerRecovery("selection");
         this.startPickerHealthCheck();
@@ -297,9 +614,11 @@ export default class ZenWriterPlugin extends Plugin {
     this.clearPickerRecovery();
     this.stopPickerHealthCheck();
     this.removeZenExitButton();
+    this.removeZenRuntimeControlCenter();
     this.clearPendingProgrammaticSelection();
     this.clearPendingProgrammaticScroll();
     this.clearPickerViewScope();
+    this.noiseEngine.destroy();
     document.body.classList.remove("zen-writer-enabled");
     delete document.body.dataset.zenWriterMode;
     document.body.style.removeProperty("--zen-writer-max-width");
@@ -328,6 +647,9 @@ export default class ZenWriterPlugin extends Plugin {
       activeLineGlow: rawSettings.activeLineGlow ?? DEFAULT_SETTINGS.activeLineGlow,
       themeDisplay: rawSettings.themeDisplay ?? DEFAULT_SETTINGS.themeDisplay,
       showExitButton: rawSettings.showExitButton ?? DEFAULT_SETTINGS.showExitButton,
+      noiseEnabled: rawSettings.noiseEnabled ?? DEFAULT_SETTINGS.noiseEnabled,
+      noiseType: normalizeNoiseScene(rawSettings.noiseType),
+      noiseVolume: rawSettings.noiseVolume ?? DEFAULT_SETTINGS.noiseVolume,
     };
   }
 
@@ -377,6 +699,11 @@ export default class ZenWriterPlugin extends Plugin {
 
     // 创建退出按钮
     this.createZenExitButton();
+
+    // 启动环境音
+    if (this.settings.noiseEnabled) {
+      this.noiseEngine.start(this.settings.noiseType, this.settings.noiseVolume);
+    }
   }
 
   private async exitZenMode(): Promise<void> {
@@ -393,6 +720,9 @@ export default class ZenWriterPlugin extends Plugin {
 
     // 移除退出按钮
     this.removeZenExitButton();
+
+    // 停止环境音
+    this.noiseEngine.stop();
 
     await this.saveSettings();
 
@@ -436,6 +766,9 @@ export default class ZenWriterPlugin extends Plugin {
     // 创建触发区域 (靠近顶部的一窄条)
     const trigger = document.createElement("div");
     trigger.className = "zen-writer-exit-trigger";
+    const hotspot = document.createElement("div");
+    hotspot.className = "zen-writer-exit-hotspot";
+    trigger.appendChild(hotspot);
     document.body.appendChild(trigger);
     this.zenExitTriggerEl = trigger;
 
@@ -450,12 +783,12 @@ export default class ZenWriterPlugin extends Plugin {
     document.body.appendChild(button);
     this.zenExitButtonEl = button;
 
-    // 鼠标移到顶部时显示按钮
-    trigger.addEventListener("mouseenter", () => {
+    // 中央热点保持可交互，其余顶部区域继续用于窗口拖动
+    hotspot.addEventListener("mouseenter", () => {
       button?.classList.add("is-visible");
     });
 
-    trigger.addEventListener("mouseleave", () => {
+    hotspot.addEventListener("mouseleave", () => {
       if (button && !button.matches(":hover")) {
         button.classList.remove("is-visible");
       }
@@ -466,7 +799,9 @@ export default class ZenWriterPlugin extends Plugin {
     });
 
     button.addEventListener("mouseleave", () => {
-      button.classList.remove("is-visible");
+      if (!hotspot.matches(":hover")) {
+        button.classList.remove("is-visible");
+      }
     });
   }
 
@@ -479,6 +814,382 @@ export default class ZenWriterPlugin extends Plugin {
       this.zenExitTriggerEl.remove();
       this.zenExitTriggerEl = null;
     }
+  }
+
+  private setZenExitButtonVisible(visible: boolean): void {
+    if (!this.zenExitButtonEl) {
+      return;
+    }
+
+    this.zenExitButtonEl.classList.toggle("is-visible", visible);
+  }
+
+  private syncZenExitButtonVisibility(pointerClientY: number): void {
+    if (!this.settings.enabled || !this.settings.showExitButton || !this.zenExitButtonEl) {
+      return;
+    }
+
+    if (pointerClientY <= TOP_EXIT_HINT_BAND_HEIGHT_PX) {
+      this.setZenExitButtonVisible(true);
+      return;
+    }
+
+    if (this.zenExitButtonEl.matches(":hover") || this.zenExitTriggerEl?.matches(":hover")) {
+      return;
+    }
+
+    this.setZenExitButtonVisible(false);
+  }
+
+  private getThemeOptions(t: typeof I18N.en): Array<{ value: ZenWriterSettings["themeDisplay"]; label: string }> {
+    return [
+      { value: "default", label: t.themeDefault },
+      { value: "sepia", label: t.themeSepia },
+      { value: "green", label: t.themeGreen },
+      { value: "dark", label: t.themeDark },
+    ];
+  }
+
+  private getNoiseSceneOptions(t: typeof I18N.en): Array<{ value: NoiseScene; label: string }> {
+    return [
+      { value: "rain", label: t.noiseRain },
+      { value: "thunderstorm", label: t.noiseThunderstorm },
+      { value: "campfire", label: t.noiseCampfire },
+      { value: "stream", label: t.noiseStream },
+      { value: "forest-wind", label: t.noiseForestWind },
+      { value: "city-street", label: t.noiseCityStreet },
+      { value: "cafe", label: t.noiseCafe },
+      { value: "library", label: t.noiseLibrary },
+      { value: "ocean", label: t.noiseOcean },
+      { value: "morning", label: t.noiseMorning },
+      { value: "night", label: t.noiseNight },
+      { value: "wind", label: t.noiseWind },
+    ];
+  }
+
+  private setZenRuntimeControlOpen(open: boolean): void {
+    this.zenRuntimeControlOpen = open;
+    this.zenRuntimeControlEl?.classList.toggle("is-open", open);
+    this.zenRuntimeLauncherEl?.setAttribute("aria-expanded", String(open));
+    this.zenRuntimePanelEl?.setAttribute("aria-hidden", String(!open));
+  }
+
+  private createZenRuntimeControlCenter(): void {
+    if (this.zenRuntimeControlEl) {
+      this.renderZenRuntimeControlPanel();
+      return;
+    }
+
+    const t = I18N[this.settings.language] || I18N.en;
+    const container = document.createElement("div");
+    container.className = "zen-runtime-controls";
+
+    const hotspot = document.createElement("div");
+    hotspot.className = "zen-runtime-hotspot";
+
+    const launcher = document.createElement("button");
+    launcher.type = "button";
+    launcher.className = "zen-runtime-toggle";
+    launcher.setAttribute("aria-label", t.runtimeControls);
+    launcher.setAttribute("aria-expanded", "false");
+    setIcon(launcher, "sliders-horizontal");
+    launcher.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.setZenRuntimeControlOpen(!this.zenRuntimeControlOpen);
+    });
+
+    const panel = document.createElement("div");
+    panel.className = "zen-runtime-panel";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-label", t.runtimeControls);
+    panel.setAttribute("aria-hidden", "true");
+
+    container.appendChild(hotspot);
+    container.appendChild(launcher);
+    container.appendChild(panel);
+    document.body.appendChild(container);
+
+    this.zenRuntimeControlEl = container;
+    this.zenRuntimeLauncherEl = launcher;
+    this.zenRuntimePanelEl = panel;
+
+    this.zenRuntimeOutsidePointerHandler = (event: PointerEvent) => {
+      if (!this.zenRuntimeControlOpen || !this.zenRuntimeControlEl || !(event.target instanceof Node)) {
+        return;
+      }
+
+      if (!this.zenRuntimeControlEl.contains(event.target)) {
+        this.setZenRuntimeControlOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", this.zenRuntimeOutsidePointerHandler, true);
+
+    this.renderZenRuntimeControlPanel();
+    this.setZenRuntimeControlOpen(this.zenRuntimeControlOpen);
+  }
+
+  private removeZenRuntimeControlCenter(): void {
+    if (this.zenRuntimeOutsidePointerHandler) {
+      document.removeEventListener("pointerdown", this.zenRuntimeOutsidePointerHandler, true);
+      this.zenRuntimeOutsidePointerHandler = null;
+    }
+
+    if (this.zenRuntimeControlEl) {
+      this.zenRuntimeControlEl.remove();
+      this.zenRuntimeControlEl = null;
+    }
+
+    this.zenRuntimeLauncherEl = null;
+    this.zenRuntimePanelEl = null;
+    this.zenRuntimeControlOpen = false;
+  }
+
+  private isZenRuntimeControlTarget(target: EventTarget | null): boolean {
+    return target instanceof Node && !!this.zenRuntimeControlEl?.contains(target);
+  }
+
+  private renderZenRuntimeControlPanel(): void {
+    if (!this.zenRuntimePanelEl) {
+      return;
+    }
+
+    const t = I18N[this.settings.language] || I18N.en;
+    const panel = this.zenRuntimePanelEl;
+    panel.replaceChildren();
+    panel.setAttribute("aria-label", t.runtimeControls);
+    this.zenRuntimeLauncherEl?.setAttribute("aria-label", t.runtimeControls);
+
+    const header = document.createElement("div");
+    header.className = "zen-runtime-header";
+    const title = document.createElement("div");
+    title.className = "zen-runtime-title";
+    title.textContent = t.runtimeControls;
+    header.appendChild(title);
+    panel.appendChild(header);
+
+    const appearanceSection = document.createElement("section");
+    appearanceSection.className = "zen-runtime-section";
+    const appearanceHeading = document.createElement("div");
+    appearanceHeading.className = "zen-runtime-section-title";
+    appearanceHeading.textContent = t.runtimePaper;
+    appearanceSection.appendChild(appearanceHeading);
+
+    const themeGrid = document.createElement("div");
+    themeGrid.className = "zen-runtime-theme-grid";
+    for (const option of this.getThemeOptions(t)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "zen-runtime-theme-option";
+      if (this.settings.themeDisplay === option.value) {
+        button.classList.add("is-active");
+      }
+      button.dataset.theme = option.value;
+      button.setAttribute("aria-pressed", String(this.settings.themeDisplay === option.value));
+      button.addEventListener("click", () => {
+        if (this.settings.themeDisplay === option.value) {
+          return;
+        }
+        this.settings.themeDisplay = option.value;
+        this.renderZenRuntimeControlPanel();
+        void this.saveSettings().catch(() => {});
+      });
+
+      const swatch = document.createElement("span");
+      swatch.className = "zen-runtime-theme-swatch";
+      button.appendChild(swatch);
+
+      const label = document.createElement("span");
+      label.className = "zen-runtime-theme-label";
+      label.textContent = option.label;
+      button.appendChild(label);
+
+      themeGrid.appendChild(button);
+    }
+    appearanceSection.appendChild(themeGrid);
+    panel.appendChild(appearanceSection);
+
+    const ambientSection = document.createElement("section");
+    ambientSection.className = "zen-runtime-section";
+    const ambientTopRow = document.createElement("div");
+    ambientTopRow.className = "zen-runtime-row";
+
+    const ambientHeading = document.createElement("div");
+    ambientHeading.className = "zen-runtime-section-title";
+    ambientHeading.textContent = t.runtimeAmbient;
+    ambientTopRow.appendChild(ambientHeading);
+
+    const ambientToggle = document.createElement("button");
+    ambientToggle.type = "button";
+    ambientToggle.className = "zen-runtime-switch";
+    ambientToggle.classList.toggle("is-active", this.settings.noiseEnabled);
+    ambientToggle.setAttribute("aria-pressed", String(this.settings.noiseEnabled));
+    ambientToggle.textContent = this.settings.noiseEnabled ? t.runtimeOn : t.runtimeOff;
+    ambientToggle.addEventListener("click", () => {
+      const nextEnabled = !this.settings.noiseEnabled;
+      this.settings.noiseEnabled = nextEnabled;
+
+      if (nextEnabled) {
+        this.noiseEngine.start(this.settings.noiseType, this.settings.noiseVolume);
+      } else {
+        this.noiseEngine.stop(0.8);
+      }
+
+      this.renderZenRuntimeControlPanel();
+      void this.saveSettings().catch(() => {});
+    });
+    ambientTopRow.appendChild(ambientToggle);
+    ambientSection.appendChild(ambientTopRow);
+
+    if (this.settings.noiseEnabled) {
+      const sceneRow = document.createElement("label");
+      sceneRow.className = "zen-runtime-stack";
+      const sceneLabel = document.createElement("span");
+      sceneLabel.className = "zen-runtime-label";
+      sceneLabel.textContent = t.runtimeScene;
+      sceneRow.appendChild(sceneLabel);
+
+      const select = document.createElement("select");
+      select.className = "zen-runtime-select";
+      for (const option of this.getNoiseSceneOptions(t)) {
+        const optionEl = document.createElement("option");
+        optionEl.value = option.value;
+        optionEl.textContent = option.label;
+        optionEl.selected = this.settings.noiseType === option.value;
+        select.appendChild(optionEl);
+      }
+      select.addEventListener("change", () => {
+        const nextScene = normalizeNoiseScene(select.value);
+        if (nextScene === this.settings.noiseType) {
+          return;
+        }
+        this.settings.noiseType = nextScene;
+        this.noiseEngine.setType(nextScene, this.settings.noiseVolume);
+        void this.saveSettings().catch(() => {});
+      });
+      sceneRow.appendChild(select);
+      ambientSection.appendChild(sceneRow);
+
+      const volumeRow = document.createElement("div");
+      volumeRow.className = "zen-runtime-stack";
+      const volumeHeader = document.createElement("div");
+      volumeHeader.className = "zen-runtime-row";
+      const volumeLabel = document.createElement("span");
+      volumeLabel.className = "zen-runtime-label";
+      volumeLabel.textContent = t.runtimeVolume;
+      const volumeValue = document.createElement("span");
+      volumeValue.className = "zen-runtime-value";
+      volumeValue.textContent = `${Math.round(this.settings.noiseVolume * 100)}%`;
+      volumeHeader.appendChild(volumeLabel);
+      volumeHeader.appendChild(volumeValue);
+      volumeRow.appendChild(volumeHeader);
+
+      const sliderShell = document.createElement("div");
+      sliderShell.className = "zen-runtime-slider";
+      const sliderTrack = document.createElement("div");
+      sliderTrack.className = "zen-runtime-slider-track";
+      const sliderFill = document.createElement("div");
+      sliderFill.className = "zen-runtime-slider-fill";
+      sliderTrack.appendChild(sliderFill);
+
+      const sliderThumb = document.createElement("div");
+      sliderThumb.className = "zen-runtime-slider-thumb";
+
+      const slider = document.createElement("input");
+      slider.className = "zen-runtime-slider-input";
+      slider.type = "range";
+      slider.min = "0.05";
+      slider.max = "1";
+      slider.step = "0.05";
+      slider.value = String(this.settings.noiseVolume);
+      slider.setAttribute("aria-label", t.runtimeVolume);
+
+      const updateSliderVisual = (value: number) => {
+        const min = Number(slider.min);
+        const max = Number(slider.max);
+        const percent = max > min ? ((value - min) / (max - min)) * 100 : 0;
+        sliderShell.style.setProperty("--zen-runtime-slider-percent", `${Math.max(0, Math.min(100, percent))}%`);
+        volumeValue.textContent = `${Math.round(value * 100)}%`;
+      };
+
+      const snapSliderValue = (value: number) => {
+        const min = Number(slider.min);
+        const max = Number(slider.max);
+        const step = Number(slider.step) || 0.05;
+        const snapped = min + Math.round((value - min) / step) * step;
+        return Math.max(min, Math.min(max, Number(snapped.toFixed(2))));
+      };
+
+      const applyVolume = (value: number, persist: boolean) => {
+        const nextVolume = snapSliderValue(value);
+        slider.value = String(nextVolume);
+        this.settings.noiseVolume = nextVolume;
+        this.noiseEngine.setVolume(nextVolume);
+        updateSliderVisual(nextVolume);
+        if (persist) {
+          void this.saveSettings().catch(() => {});
+        }
+      };
+
+      let activePointerId: number | null = null;
+      const updateVolumeFromClientX = (clientX: number, persist: boolean) => {
+        const rect = sliderTrack.getBoundingClientRect();
+        if (!rect.width) {
+          return;
+        }
+        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        const min = Number(slider.min);
+        const max = Number(slider.max);
+        const value = min + ratio * (max - min);
+        applyVolume(value, persist);
+      };
+
+      updateSliderVisual(this.settings.noiseVolume);
+      slider.addEventListener("input", () => {
+        applyVolume(Number(slider.value), false);
+      });
+      slider.addEventListener("change", () => {
+        applyVolume(Number(slider.value), true);
+      });
+      sliderShell.addEventListener("pointerdown", (event: PointerEvent) => {
+        if (event.button !== 0) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        activePointerId = event.pointerId;
+        sliderShell.setPointerCapture(event.pointerId);
+        updateVolumeFromClientX(event.clientX, false);
+      });
+      sliderShell.addEventListener("pointermove", (event: PointerEvent) => {
+        if (activePointerId !== event.pointerId) {
+          return;
+        }
+        updateVolumeFromClientX(event.clientX, false);
+      });
+      sliderShell.addEventListener("pointerup", (event: PointerEvent) => {
+        if (activePointerId !== event.pointerId) {
+          return;
+        }
+        updateVolumeFromClientX(event.clientX, true);
+        sliderShell.releasePointerCapture(event.pointerId);
+        activePointerId = null;
+      });
+      sliderShell.addEventListener("pointercancel", (event: PointerEvent) => {
+        if (activePointerId !== event.pointerId) {
+          return;
+        }
+        sliderShell.releasePointerCapture(event.pointerId);
+        activePointerId = null;
+      });
+      sliderShell.appendChild(sliderTrack);
+      sliderShell.appendChild(sliderThumb);
+      sliderShell.appendChild(slider);
+      volumeRow.appendChild(sliderShell);
+      ambientSection.appendChild(volumeRow);
+    }
+
+    panel.appendChild(ambientSection);
   }
 
   public applyZenState(): void {
@@ -511,6 +1222,10 @@ export default class ZenWriterPlugin extends Plugin {
         this.schedulePickerRecovery("selection");
         this.startPickerHealthCheck();
       });
+
+      // 同步噪音状态（处理设置面板实时调整）
+      this.syncNoiseState();
+      this.createZenRuntimeControlCenter();
     } else {
       this.clearCenterTimer();
       this.clearViewportRefreshFrame();
@@ -525,8 +1240,33 @@ export default class ZenWriterPlugin extends Plugin {
       this.clearPickerViewScope();
       this.clearFocusFrameEdgeSpacing();
       this.clearFocusFrameResync();
+      this.removeZenRuntimeControlCenter();
     }
   }
+
+  /** Sync noise engine state with current settings (called from applyZenState). */
+  private syncNoiseState(): void {
+    if (!this.settings.enabled) {
+      return;
+    }
+
+    if (!this.settings.noiseEnabled) {
+      // User turned off noise while in Zen mode
+      if (this.noiseEngine.isRunning) {
+        this.noiseEngine.stop();
+      }
+      return;
+    }
+
+    if (!this.noiseEngine.isRunning) {
+      // Noise was off; start it
+      this.noiseEngine.start(this.settings.noiseType, this.settings.noiseVolume);
+    } else {
+      // Engine is running: update volume in real-time, type change handled by setType
+      this.noiseEngine.setVolume(this.settings.noiseVolume);
+    }
+  }
+
 
   private scheduleViewportRefresh(trigger: ZenWriterCenterTrigger): void {
     if (!this.settings.enabled) {
@@ -1419,6 +2159,35 @@ export default class ZenWriterPlugin extends Plugin {
       return;
     }
 
+    if (event.type === "mousedown" && Date.now() - this.runtimePanelDismissPointerTime < 100) {
+      this.runtimePanelDismissPointerTime = 0;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      return;
+    }
+
+    if (this.zenRuntimeControlOpen && !this.isZenRuntimeControlTarget(event.target)) {
+      if (event.type === "pointerdown") {
+        this.runtimePanelDismissPointerTime = Date.now();
+      }
+      this.setZenRuntimeControlOpen(false);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      return;
+    }
+
+    if (this.isZenRuntimeControlTarget(event.target)) {
+      return;
+    }
+
+    // Preserve the native top drag zone while Zen mode is active.
+    if (event.clientY <= TOP_DRAG_STRIP_HEIGHT_PX) {
+      this.setZenExitButtonVisible(this.settings.showExitButton);
+      return;
+    }
+
     // Prevent double execution for mousedown that follows pointerdown
     if (event.type === "mousedown" && Date.now() - this.lastPointerDownTime < 100) {
       const physicalAnchor = window.innerHeight * 0.5;
@@ -1744,6 +2513,34 @@ const I18N = {
     commandToggle: "Enter/exit Zen writing mode",
     showExitButton: "Show top exit button",
     showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit Zen mode.",
+    runtimeControls: "Zen controls",
+    runtimePaper: "Paper",
+    runtimeAmbient: "Ambient",
+    runtimeScene: "Scene",
+    runtimeVolume: "Volume",
+    runtimeOn: "On",
+    runtimeOff: "Off",
+    noiseEnabled: "Ambient sound",
+    noiseEnabledDesc: "Play a gentle background sound to help you stay in flow while writing.",
+    noiseType: "Sound scene",
+    noiseTypeDesc: "Choose the synthesized ambient scene. All sounds are generated in real-time — no audio files.",
+    noiseRain: "🌧️  Rain",
+    noiseThunderstorm: "⛈️  Thunderstorm",
+    noiseCampfire: "🔥  Campfire",
+    noiseStream: "💧  Stream",
+    noiseForestWind: "🌲  Forest wind",
+    noiseCityStreet: "🏙️  City street",
+    noiseCafe: "☕  Coffee shop",
+    noiseLibrary: "📚  Library",
+    noiseOcean: "🌊  Ocean waves",
+    noiseMorning: "🌅  Morning birds",
+    noiseNight: "🌙  Night crickets",
+    noiseWind: "🌬️  Open wind",
+    noiseWhite: "◻️  White noise",
+    noisePink: "🟪  Pink noise",
+    noiseBrown: "🟫  Brown noise",
+    noiseVolume: "Volume",
+    noiseVolumeDesc: "Adjust the volume of the ambient sound.",
     statusBarOn: "Zen Writer: picker",
     statusBarOff: "Zen Writer: off",
   },
@@ -1753,9 +2550,9 @@ const I18N = {
     themeDisplay: "编辑器纸张背景",
     themeDisplayDesc: "选择令你舒适的沉浸式背景底色调色板。",
     themeDefault: "系统默认",
-    themeSepia: "护眼黄 (Sepia)",
-    themeGreen: "护眼绿 (Green)",
-    themeDark: "深灰夜间 (Dark)",
+    themeSepia: "护眼黄",
+    themeGreen: "护眼绿",
+    themeDark: "深灰夜间",
     activeLineGlow: "启用当前行背景",
     activeLineGlowDesc: "使用微弱的背景来显示当前光标所在行。",
     contentWidth: "正文内容最大宽度",
@@ -1773,6 +2570,34 @@ const I18N = {
     commandToggle: "进入/退出禅意写作模式",
     showExitButton: "显示顶部退出按钮",
     showExitButtonDesc: "在页面顶部显示一个极浅的 'X' 图标，仅在鼠标悬停在顶部时可见，点击可退出禅意模式。",
+    runtimeControls: "禅意控制",
+    runtimePaper: "纸张",
+    runtimeAmbient: "环境音",
+    runtimeScene: "场景",
+    runtimeVolume: "音量",
+    runtimeOn: "开启",
+    runtimeOff: "关闭",
+    noiseEnabled: "环境音",
+    noiseEnabledDesc: "进入禅意模式时播放合成的场景音效，帮助你更快进入心流状态。",
+    noiseType: "声音场景",
+    noiseTypeDesc: "选择要合成的环境音场景，所有声音均实时生成，无需音频文件。",
+    noiseRain: "🌧️  雨声",
+    noiseThunderstorm: "⛈️  雷暴",
+    noiseCampfire: "🔥  篝火",
+    noiseStream: "💧  溪流",
+    noiseForestWind: "🌲  森林风声",
+    noiseCityStreet: "🏙️  城市街道",
+    noiseCafe: "☕  咖啡馆",
+    noiseLibrary: "📚  图书馆",
+    noiseOcean: "🌊  海浪",
+    noiseMorning: "🌅  晨间鸟鸣",
+    noiseNight: "🌙  夜晚虫鸣",
+    noiseWind: "🌬️  旷野风声",
+    noiseWhite: "◻️  白噪音",
+    noisePink: "🟪  粉噪音",
+    noiseBrown: "🟫  棕噪音",
+    noiseVolume: "音量",
+    noiseVolumeDesc: "调节环境音的播放音量。",
     statusBarOn: "Zen Writer: 聚焦中",
     statusBarOff: "Zen Writer: 已关闭",
   }
@@ -1977,5 +2802,84 @@ class ZenWriterSettingTab extends PluginSettingTab {
             })().catch(() => {});
           })
       );
+
+    // ── Ambient Noise Section ──────────────────────────────────────────
+
+    new Setting(containerEl).setName(t.noiseEnabled).setHeading();
+
+    new Setting(containerEl)
+      .setName(t.noiseEnabled)
+      .setDesc(t.noiseEnabledDesc)
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.noiseEnabled).onChange((value) => {
+          this.plugin.settings.noiseEnabled = value;
+          // Immediately stop engine if user disables ambient sound
+          if (!value) {
+            this.plugin.noiseEngine.destroy();
+          }
+          void (async () => {
+            await this.plugin.saveSettings();
+            this.display(); // re-render to show/hide dependent settings
+          })().catch(() => {});
+        }),
+      );
+
+    if (this.plugin.settings.noiseEnabled) {
+      new Setting(containerEl)
+        .setName(t.noiseType)
+        .setDesc(t.noiseTypeDesc)
+        .addDropdown((dropdown) =>
+          dropdown
+            .addOption("rain",         t.noiseRain)
+            .addOption("thunderstorm", t.noiseThunderstorm)
+            .addOption("campfire",     t.noiseCampfire)
+            .addOption("stream",       t.noiseStream)
+            .addOption("forest-wind",  t.noiseForestWind)
+            .addOption("city-street",  t.noiseCityStreet)
+            .addOption("cafe",         t.noiseCafe)
+            .addOption("library",      t.noiseLibrary)
+            .addOption("ocean",        t.noiseOcean)
+            .addOption("morning",      t.noiseMorning)
+            .addOption("night",        t.noiseNight)
+            .addOption("wind",         t.noiseWind)
+            .setValue(this.plugin.settings.noiseType)
+            .onChange((value: NoiseScene) => {
+              const changed = this.plugin.settings.noiseType !== value;
+              this.plugin.settings.noiseType = value;
+              if (changed) {
+                this.plugin.noiseEngine.setType(value, this.plugin.settings.noiseVolume);
+              }
+              void this.plugin.saveSettings().catch(() => {});
+            }),
+        );
+
+      new Setting(containerEl)
+        .setName(t.noiseVolume)
+        .setDesc(t.noiseVolumeDesc)
+        .addSlider((slider) =>
+          slider
+            .setLimits(0.05, 1, 0.05)
+            .setValue(this.plugin.settings.noiseVolume)
+            .setDynamicTooltip()
+            .onChange((value) => {
+              this.plugin.settings.noiseVolume = value;
+              this.plugin.noiseEngine.setVolume(value);
+              void this.plugin.saveSettings().catch(() => {});
+            }),
+        )
+        .addExtraButton((button) =>
+          button
+            .setIcon("reset")
+            .setTooltip(t.restoreDefault)
+            .onClick(() => {
+              this.plugin.settings.noiseVolume = DEFAULT_SETTINGS.noiseVolume;
+              this.plugin.noiseEngine.setVolume(DEFAULT_SETTINGS.noiseVolume);
+              void (async () => {
+                await this.plugin.saveSettings();
+                this.display();
+              })().catch(() => {});
+            })
+        );
+    }
   }
 }

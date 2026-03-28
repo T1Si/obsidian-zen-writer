@@ -18,7 +18,11 @@ A premium, distraction-free immersive writing environment for Obsidian.
       ![Dark Night](assets/dark_night_theme.png)
 - **Ultra-Minimal UI**: Automatically hides sidebars, ribbons, and status bars, leaving you with nothing but a pure writing canvas.
 - **Focus Guidance**: Uses a unique "Picker" mask and subtle background dimming to naturally lock your eyes onto the current paragraph.
+- **Ambient Sound**: Optional background soundscapes (rain, campfire, ocean waves, morning birds, and more) streamed from the Internet Archive to help you reach a flow state. Scenes are looped seamlessly with smooth 2-second fade-in/out.
 - **Full Localization**: Native support for English and Chinese (i18n), ensuring all settings and commands feel right at home.
+
+> **Network usage**: When the Ambient Sound feature is enabled, the plugin streams audio files from [archive.org](https://archive.org) (Internet Archive), a US non-profit open-access library. Requests are made only when you explicitly enable this feature and enter Zen mode. No personal data is transmitted; only audio file HTTP requests are sent.
+
 
 ## 🚀 Quick Start
 
