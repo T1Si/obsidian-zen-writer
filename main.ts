@@ -1,4 +1,5 @@
-import { MarkdownView, Plugin, PluginSettingTab, Setting, TFile, setIcon } from "obsidian";
+import { MarkdownView, Plugin, PluginSettingTab, Setting, TFile, addIcon, setIcon } from "obsidian";
+import type { MarkdownViewModeType, ViewState } from "obsidian";
 
 type ZenWriterCenterTrigger = "typing" | "navigation" | "pointer" | "open" | "resize" | "selection" | "wheel";
 type EditorCursor = { line: number; ch: number };
@@ -36,6 +37,15 @@ const PICKER_RECOVERY_MAX_ATTEMPTS = 20;
 const PICKER_SETTLE_FRAMES = 10;
 const TOP_DRAG_STRIP_HEIGHT_PX = 48;
 const TOP_EXIT_HINT_BAND_HEIGHT_PX = 96;
+const ZEN_ENTRY_HINT_DELAY_MS = 260;
+const ZEN_ENTRY_HINT_DURATION_MS = 3000;
+const ZEN_WRITER_ICON_ID = "zen-writer-z";
+const ZEN_WRITER_ICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">' +
+  '<g transform="translate(12 12) rotate(14) scale(1.36) translate(-12 -12)">' +
+  '<rect x="6.2" y="4.9" width="11.6" height="14.2" rx="1.05" stroke="currentColor" stroke-width="1.35"/>' +
+  '<path fill="currentColor" d="M10.95 8.95h4.9v1.4l-3.18 2.86 3.18.8v1.5h-5.2v-1.28l3.34-3.02-3.04-.73z"/>' +
+  "</g></svg>";
 const DEFAULT_NOISE_SCENE: NoiseScene = "rain";
 const REMOVED_NOISE_SCENE_FALLBACKS: Record<LegacyNoiseScene, NoiseScene> = {
   white: DEFAULT_NOISE_SCENE,
@@ -55,6 +65,8 @@ interface ZenWriterSettings {
   activeLineGlow: boolean;
   themeDisplay: "default" | "sepia" | "green" | "dark";
   showExitButton: boolean;
+  entryHintEnabled: boolean;
+  zenRestoreMode: MarkdownViewModeType | null;
   noiseEnabled: boolean;
   noiseType: NoiseScene;
   noiseVolume: number;
@@ -72,6 +84,8 @@ const DEFAULT_SETTINGS: ZenWriterSettings = {
   activeLineGlow: true,
   themeDisplay: "default",
   showExitButton: true,
+  entryHintEnabled: true,
+  zenRestoreMode: null,
   noiseEnabled: false,
   noiseType: DEFAULT_NOISE_SCENE,
   noiseVolume: 0.25,
@@ -143,6 +157,30 @@ function normalizeNoiseScene(value: unknown): NoiseScene {
   }
 
   return REMOVED_NOISE_SCENE_FALLBACKS[value as LegacyNoiseScene] ?? DEFAULT_NOISE_SCENE;
+}
+
+function normalizeZenEntryHintEnabled(value: unknown, legacyMode: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (legacyMode === "off") {
+    return false;
+  }
+
+  if (legacyMode === "smart" || legacyMode === "always") {
+    return true;
+  }
+
+  return DEFAULT_SETTINGS.entryHintEnabled;
+}
+
+function normalizeMarkdownViewMode(value: unknown): MarkdownViewModeType | null {
+  if (value === "source" || value === "preview") {
+    return value;
+  }
+
+  return DEFAULT_SETTINGS.zenRestoreMode;
 }
 
 class AmbientSoundEngine {
@@ -385,6 +423,9 @@ export default class ZenWriterPlugin extends Plugin {
   private zenRuntimePanelEl: HTMLElement | null = null;
   private zenRuntimeControlOpen = false;
   private zenRuntimeOutsidePointerHandler: ((event: PointerEvent) => void) | null = null;
+  private zenEntryHintDelayTimer: number | null = null;
+  private zenEntryHintHideTimer: number | null = null;
+  private zenEntryHintActive = false;
   private runtimePanelDismissPointerTime = 0;
   private leftSidebarWasVisible = false;
   private rightSidebarWasVisible = false;
@@ -393,6 +434,7 @@ export default class ZenWriterPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
+    addIcon(ZEN_WRITER_ICON_ID, ZEN_WRITER_ICON_SVG);
     this.statusBarItemEl = this.addStatusBarItem();
     this.registerCommands();
     this.registerRibbonIcon();
@@ -404,6 +446,8 @@ export default class ZenWriterPlugin extends Plugin {
         if (!this.settings.enabled || this.isComposing) {
           return;
         }
+
+        this.dismissZenEntryHint();
 
         const view = this.getActiveMarkdownView();
         if (!view) {
@@ -423,6 +467,8 @@ export default class ZenWriterPlugin extends Plugin {
       if (!this.settings.enabled || this.isComposing) {
         return;
       }
+
+      this.dismissZenEntryHint();
 
       // 快捷退出：按下 Esc 键退出禅意模式
       if (event.key === "Escape") {
@@ -585,6 +631,7 @@ export default class ZenWriterPlugin extends Plugin {
     this.registerDomEvent(window, "blur", () => {
       this.rememberActiveCursor();
       this.clearPickerRecovery();
+      this.dismissZenEntryHint();
       this.setZenExitButtonVisible(false);
       this.setZenRuntimeControlOpen(false);
     });
@@ -594,6 +641,7 @@ export default class ZenWriterPlugin extends Plugin {
         this.rememberActiveCursor();
         this.clearPickerRecovery();
         this.stopPickerHealthCheck();
+        this.dismissZenEntryHint();
         this.setZenRuntimeControlOpen(false);
       } else {
         this.schedulePickerRecovery("selection");
@@ -613,6 +661,7 @@ export default class ZenWriterPlugin extends Plugin {
     this.clearPickerSettleFrame();
     this.clearPickerRecovery();
     this.stopPickerHealthCheck();
+    this.dismissZenEntryHint();
     this.removeZenExitButton();
     this.removeZenRuntimeControlCenter();
     this.clearPendingProgrammaticSelection();
@@ -647,6 +696,8 @@ export default class ZenWriterPlugin extends Plugin {
       activeLineGlow: rawSettings.activeLineGlow ?? DEFAULT_SETTINGS.activeLineGlow,
       themeDisplay: rawSettings.themeDisplay ?? DEFAULT_SETTINGS.themeDisplay,
       showExitButton: rawSettings.showExitButton ?? DEFAULT_SETTINGS.showExitButton,
+      entryHintEnabled: normalizeZenEntryHintEnabled(rawSettings.entryHintEnabled, rawSettings.entryHintMode),
+      zenRestoreMode: normalizeMarkdownViewMode(rawSettings.zenRestoreMode),
       noiseEnabled: rawSettings.noiseEnabled ?? DEFAULT_SETTINGS.noiseEnabled,
       noiseType: normalizeNoiseScene(rawSettings.noiseType),
       noiseVolume: rawSettings.noiseVolume ?? DEFAULT_SETTINGS.noiseVolume,
@@ -667,8 +718,18 @@ export default class ZenWriterPlugin extends Plugin {
   }
 
   private async enterZenMode(): Promise<void> {
-    const view = this.getActiveMarkdownView();
-    if (!view) {
+    const currentView = this.getActiveWorkspaceMarkdownView();
+    if (!currentView) {
+      return;
+    }
+
+    const originalMode = this.getMarkdownViewMode(currentView);
+    const view =
+      originalMode === "source"
+        ? currentView
+        : await this.setMarkdownViewMode(currentView, "source");
+
+    if (!view || this.getMarkdownViewMode(view) !== "source") {
       return;
     }
 
@@ -692,13 +753,13 @@ export default class ZenWriterPlugin extends Plugin {
     // 锁定当前文件
     this.settings.enabled = true;
     this.settings.zenLockedFile = filePath;
+    this.settings.zenRestoreMode = originalMode;
     await this.saveSettings();
 
     // 应用 Zen 状态（这会触发 picker 效果）
     this.applyZenState();
 
-    // 创建退出按钮
-    this.createZenExitButton();
+    this.scheduleZenEntryHint();
 
     // 启动环境音
     if (this.settings.noiseEnabled) {
@@ -707,8 +768,12 @@ export default class ZenWriterPlugin extends Plugin {
   }
 
   private async exitZenMode(): Promise<void> {
+    const restoreMode = this.settings.zenRestoreMode;
+    const lockedFilePath = this.settings.zenLockedFile;
+
     this.settings.enabled = false;
     this.settings.zenLockedFile = null;
+    this.settings.zenRestoreMode = null;
 
     // 恢复侧边栏状态
     if (this.leftSidebarWasVisible) {
@@ -717,6 +782,8 @@ export default class ZenWriterPlugin extends Plugin {
     if (this.rightSidebarWasVisible) {
       this.app.workspace.rightSplit.expand();
     }
+
+    this.dismissZenEntryHint();
 
     // 移除退出按钮
     this.removeZenExitButton();
@@ -728,6 +795,8 @@ export default class ZenWriterPlugin extends Plugin {
 
     // 应用状态（这会清理 picker 效果）
     this.applyZenState();
+
+    await this.restoreZenViewMode(restoreMode, lockedFilePath);
   }
 
   private restoreLockedFile(): void {
@@ -783,6 +852,10 @@ export default class ZenWriterPlugin extends Plugin {
     document.body.appendChild(button);
     this.zenExitButtonEl = button;
 
+    if (this.zenEntryHintActive) {
+      button.classList.add("is-visible");
+    }
+
     // 中央热点保持可交互，其余顶部区域继续用于窗口拖动
     hotspot.addEventListener("mouseenter", () => {
       button?.classList.add("is-visible");
@@ -829,6 +902,11 @@ export default class ZenWriterPlugin extends Plugin {
       return;
     }
 
+    if (this.zenEntryHintActive) {
+      this.setZenExitButtonVisible(true);
+      return;
+    }
+
     if (pointerClientY <= TOP_EXIT_HINT_BAND_HEIGHT_PX) {
       this.setZenExitButtonVisible(true);
       return;
@@ -867,7 +945,91 @@ export default class ZenWriterPlugin extends Plugin {
     ];
   }
 
+  private shouldShowZenEntryHint(): boolean {
+    return this.settings.enabled && this.settings.entryHintEnabled;
+  }
+
+  private clearZenEntryHintTimers(): void {
+    if (this.zenEntryHintDelayTimer !== null) {
+      window.clearTimeout(this.zenEntryHintDelayTimer);
+      this.zenEntryHintDelayTimer = null;
+    }
+
+    if (this.zenEntryHintHideTimer !== null) {
+      window.clearTimeout(this.zenEntryHintHideTimer);
+      this.zenEntryHintHideTimer = null;
+    }
+  }
+
+  private setZenRuntimeControlPeekVisible(visible: boolean): void {
+    if (!this.zenRuntimeControlEl) {
+      return;
+    }
+
+    this.zenRuntimeControlEl.classList.toggle("is-peeking", visible);
+  }
+
+  private dismissZenEntryHint(): void {
+    const wasActive = this.zenEntryHintActive;
+
+    this.clearZenEntryHintTimers();
+    this.zenEntryHintActive = false;
+    this.setZenRuntimeControlPeekVisible(false);
+
+    if (
+      wasActive &&
+      this.zenExitButtonEl &&
+      !this.zenExitButtonEl.matches(":hover") &&
+      !this.zenExitTriggerEl?.matches(":hover")
+    ) {
+      this.setZenExitButtonVisible(false);
+    }
+  }
+
+  private scheduleZenEntryHint(): void {
+    this.dismissZenEntryHint();
+
+    if (!this.shouldShowZenEntryHint()) {
+      return;
+    }
+
+    const hasHintTarget = (this.settings.showExitButton && !!this.zenExitButtonEl) || !!this.zenRuntimeLauncherEl;
+    if (!hasHintTarget) {
+      return;
+    }
+
+    this.zenEntryHintDelayTimer = window.setTimeout(() => {
+      this.zenEntryHintDelayTimer = null;
+
+      if (!this.shouldShowZenEntryHint()) {
+        return;
+      }
+
+      const hasVisibleTarget = (this.settings.showExitButton && !!this.zenExitButtonEl) || !!this.zenRuntimeLauncherEl;
+      if (!hasVisibleTarget) {
+        return;
+      }
+
+      this.zenEntryHintActive = true;
+
+      if (this.settings.showExitButton) {
+        this.setZenExitButtonVisible(true);
+      }
+
+      this.setZenRuntimeControlPeekVisible(true);
+
+      this.zenEntryHintHideTimer = window.setTimeout(() => {
+        this.zenEntryHintHideTimer = null;
+        this.dismissZenEntryHint();
+      }, ZEN_ENTRY_HINT_DURATION_MS);
+    }, ZEN_ENTRY_HINT_DELAY_MS);
+  }
+
   private setZenRuntimeControlOpen(open: boolean): void {
+    if (open) {
+      this.dismissZenEntryHint();
+    }
+
     this.zenRuntimeControlOpen = open;
     this.zenRuntimeControlEl?.classList.toggle("is-open", open);
     this.zenRuntimeLauncherEl?.setAttribute("aria-expanded", String(open));
@@ -913,6 +1075,10 @@ export default class ZenWriterPlugin extends Plugin {
     this.zenRuntimeControlEl = container;
     this.zenRuntimeLauncherEl = launcher;
     this.zenRuntimePanelEl = panel;
+
+    if (this.zenEntryHintActive) {
+      this.setZenRuntimeControlPeekVisible(true);
+    }
 
     this.zenRuntimeOutsidePointerHandler = (event: PointerEvent) => {
       if (!this.zenRuntimeControlOpen || !this.zenRuntimeControlEl || !(event.target instanceof Node)) {
@@ -1215,6 +1381,14 @@ export default class ZenWriterPlugin extends Plugin {
       this.statusBarItemEl.textContent = this.settings.enabled ? t.statusBarOn : t.statusBarOff;
     }
 
+    if (this.settings.enabled && this.settings.showExitButton) {
+      if (!this.zenExitButtonEl || !this.zenExitTriggerEl) {
+        this.createZenExitButton();
+      }
+    } else {
+      this.removeZenExitButton();
+    }
+
     if (this.settings.enabled && !this.isComposing) {
       // 立即尝试同步当前文档
       window.requestAnimationFrame(() => {
@@ -1240,6 +1414,7 @@ export default class ZenWriterPlugin extends Plugin {
       this.clearPickerViewScope();
       this.clearFocusFrameEdgeSpacing();
       this.clearFocusFrameResync();
+      this.dismissZenEntryHint();
       this.removeZenRuntimeControlCenter();
     }
   }
@@ -1735,13 +1910,82 @@ export default class ZenWriterPlugin extends Plugin {
     }
   }
 
+  private getActiveWorkspaceMarkdownView(): MarkdownView | null {
+    return this.app.workspace.getActiveViewOfType(MarkdownView);
+  }
+
+  private getMarkdownViewMode(view: MarkdownView): MarkdownViewModeType {
+    if (typeof view.getMode === "function") {
+      return view.getMode();
+    }
+
+    return "source";
+  }
+
+  private async setMarkdownViewMode(view: MarkdownView, mode: MarkdownViewModeType): Promise<MarkdownView | null> {
+    if (this.getMarkdownViewMode(view) === mode) {
+      return view;
+    }
+
+    const leaf = view.leaf;
+    const currentState = leaf.getViewState();
+    const nextState: ViewState = {
+      ...currentState,
+      state: {
+        ...(currentState.state ?? {}),
+        mode,
+      },
+    };
+
+    await leaf.setViewState(nextState);
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => resolve());
+    });
+
+    return leaf.view instanceof MarkdownView ? leaf.view : this.getActiveWorkspaceMarkdownView();
+  }
+
+  private findMarkdownViewForPath(filePath: string | null): MarkdownView | null {
+    if (!filePath) {
+      return this.getActiveWorkspaceMarkdownView();
+    }
+
+    const activeView = this.getActiveWorkspaceMarkdownView();
+    if (activeView && this.getViewFilePath(activeView) === filePath) {
+      return activeView;
+    }
+
+    const leaves = this.app.workspace.getLeavesOfType("markdown");
+    for (const leaf of leaves) {
+      const view = leaf.view;
+      if (view instanceof MarkdownView && this.getViewFilePath(view) === filePath) {
+        return view;
+      }
+    }
+
+    return null;
+  }
+
+  private async restoreZenViewMode(mode: MarkdownViewModeType | null, filePath: string | null): Promise<void> {
+    if (!mode) {
+      return;
+    }
+
+    const view = this.findMarkdownViewForPath(filePath);
+    if (!view || this.getMarkdownViewMode(view) === mode) {
+      return;
+    }
+
+    await this.setMarkdownViewMode(view, mode);
+  }
+
   private getActiveMarkdownView(): MarkdownView | null {
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const view = this.getActiveWorkspaceMarkdownView();
     if (!view) {
       return null;
     }
 
-    if (typeof view.getMode === "function" && view.getMode() !== "source") {
+    if (this.getMarkdownViewMode(view) !== "source") {
       return null;
     }
 
@@ -2124,6 +2368,8 @@ export default class ZenWriterPlugin extends Plugin {
       return;
     }
 
+    this.dismissZenEntryHint();
+
     if (event.ctrlKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
       return;
     }
@@ -2158,6 +2404,8 @@ export default class ZenWriterPlugin extends Plugin {
     if (event.button !== 0) {
       return;
     }
+
+    this.dismissZenEntryHint();
 
     if (event.type === "mousedown" && Date.now() - this.runtimePanelDismissPointerTime < 100) {
       this.runtimePanelDismissPointerTime = 0;
@@ -2458,7 +2706,7 @@ export default class ZenWriterPlugin extends Plugin {
       this.ribbonIconEl.setAttribute("aria-label", t.ribbonTooltip);
       return;
     }
-    this.ribbonIconEl = this.addRibbonIcon("pen-tool", t.ribbonTooltip, () => {
+    this.ribbonIconEl = this.addRibbonIcon(ZEN_WRITER_ICON_ID, t.ribbonTooltip, () => {
       void this.toggleZenWriter().catch(() => {});
     });
   }
@@ -2508,11 +2756,15 @@ const I18N = {
     pickerHeightDesc: "Sets the height of the centered picker window.",
     pickerPadding: "Picker side padding",
     pickerPaddingDesc: "Adds horizontal inset so the picker window does not touch the editor edges.",
+    settingsGeneral: "General",
+    settingsDetails: "Details",
     restoreDefault: "Restore default",
     ribbonTooltip: "Enter Zen writing mode",
     commandToggle: "Enter/exit Zen writing mode",
     showExitButton: "Show top exit button",
     showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit Zen mode.",
+    entryHintEnabled: "Entry control hint",
+    entryHintEnabledDesc: "Briefly reveal the exit and control buttons every time Zen mode starts so the interaction model is easy to discover.",
     runtimeControls: "Zen controls",
     runtimePaper: "Paper",
     runtimeAmbient: "Ambient",
@@ -2565,11 +2817,15 @@ const I18N = {
     pickerHeightDesc: "设置居中区域未被过度虚化遮挡的窗口高度。",
     pickerPadding: "聚焦带左右内边距",
     pickerPaddingDesc: "增加水平边距，避免居中聚焦带的高亮边缘直接贴住编辑器两侧。",
+    settingsGeneral: "通用",
+    settingsDetails: "细节",
     restoreDefault: "恢复默认值",
     ribbonTooltip: "进入禅意写作模式",
     commandToggle: "进入/退出禅意写作模式",
     showExitButton: "显示顶部退出按钮",
     showExitButtonDesc: "在页面顶部显示一个极浅的 'X' 图标，仅在鼠标悬停在顶部时可见，点击可退出禅意模式。",
+    entryHintEnabled: "进入时操作提示",
+    entryHintEnabledDesc: "每次进入禅意模式时，短暂显示退出按钮和控制按钮，帮助用户快速理解操作方式。",
     runtimeControls: "禅意控制",
     runtimePaper: "纸张",
     runtimeAmbient: "环境音",
@@ -2618,6 +2874,7 @@ class ZenWriterSettingTab extends PluginSettingTab {
     containerEl.replaceChildren();
 
     new Setting(containerEl).setName(this.plugin.manifest.name).setHeading();
+    new Setting(containerEl).setName(t.settingsGeneral).setHeading();
 
     new Setting(containerEl)
       .setName(t.language)
@@ -2667,6 +2924,16 @@ class ZenWriterSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName(t.entryHintEnabled)
+      .setDesc(t.entryHintEnabledDesc)
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.entryHintEnabled).onChange((value) => {
+          this.plugin.settings.entryHintEnabled = value;
+          void this.plugin.saveSettings().catch(() => {});
+        }),
+      );
+
+    new Setting(containerEl)
       .setName(t.activeLineGlow)
       .setDesc(t.activeLineGlowDesc)
       .addToggle((toggle) =>
@@ -2675,6 +2942,8 @@ class ZenWriterSettingTab extends PluginSettingTab {
           void this.plugin.saveSettings().catch(() => {});
         }),
       );
+
+    new Setting(containerEl).setName(t.settingsDetails).setHeading();
 
     new Setting(containerEl)
       .setName(t.contentWidth)

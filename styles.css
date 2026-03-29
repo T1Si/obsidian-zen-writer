@@ -343,6 +343,7 @@ body.zen-writer-enabled .workspace-split.mod-vertical > .workspace-leaf-content 
 }
 
 .zen-runtime-hotspot:hover + .zen-runtime-toggle,
+.zen-runtime-controls.is-peeking .zen-runtime-toggle,
 .zen-runtime-toggle:hover,
 .zen-runtime-controls.is-open .zen-runtime-toggle {
   opacity: 1;

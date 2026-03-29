@@ -48,6 +48,10 @@ var PICKER_RECOVERY_MAX_ATTEMPTS = 20;
 var PICKER_SETTLE_FRAMES = 10;
 var TOP_DRAG_STRIP_HEIGHT_PX = 48;
 var TOP_EXIT_HINT_BAND_HEIGHT_PX = 96;
+var ZEN_ENTRY_HINT_DELAY_MS = 260;
+var ZEN_ENTRY_HINT_DURATION_MS = 3e3;
+var ZEN_WRITER_ICON_ID = "zen-writer-z";
+var ZEN_WRITER_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><g transform="translate(12 12) rotate(14) scale(1.36) translate(-12 -12)"><rect x="6.2" y="4.9" width="11.6" height="14.2" rx="1.05" stroke="currentColor" stroke-width="1.35"/><path fill="currentColor" d="M10.95 8.95h4.9v1.4l-3.18 2.86 3.18.8v1.5h-5.2v-1.28l3.34-3.02-3.04-.73z"/></g></svg>';
 var DEFAULT_NOISE_SCENE = "rain";
 var REMOVED_NOISE_SCENE_FALLBACKS = {
   white: DEFAULT_NOISE_SCENE,
@@ -66,6 +70,8 @@ var DEFAULT_SETTINGS = {
   activeLineGlow: true,
   themeDisplay: "default",
   showExitButton: true,
+  entryHintEnabled: true,
+  zenRestoreMode: null,
   noiseEnabled: false,
   noiseType: DEFAULT_NOISE_SCENE,
   noiseVolume: 0.25
@@ -130,6 +136,24 @@ function normalizeNoiseScene(value) {
     return value;
   }
   return (_a = REMOVED_NOISE_SCENE_FALLBACKS[value]) != null ? _a : DEFAULT_NOISE_SCENE;
+}
+function normalizeZenEntryHintEnabled(value, legacyMode) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (legacyMode === "off") {
+    return false;
+  }
+  if (legacyMode === "smart" || legacyMode === "always") {
+    return true;
+  }
+  return DEFAULT_SETTINGS.entryHintEnabled;
+}
+function normalizeMarkdownViewMode(value) {
+  if (value === "source" || value === "preview") {
+    return value;
+  }
+  return DEFAULT_SETTINGS.zenRestoreMode;
 }
 var AmbientSoundEngine = class {
   constructor() {
@@ -349,6 +373,9 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     this.zenRuntimePanelEl = null;
     this.zenRuntimeControlOpen = false;
     this.zenRuntimeOutsidePointerHandler = null;
+    this.zenEntryHintDelayTimer = null;
+    this.zenEntryHintHideTimer = null;
+    this.zenEntryHintActive = false;
     this.runtimePanelDismissPointerTime = 0;
     this.leftSidebarWasVisible = false;
     this.rightSidebarWasVisible = false;
@@ -357,6 +384,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
   }
   async onload() {
     await this.loadSettings();
+    (0, import_obsidian.addIcon)(ZEN_WRITER_ICON_ID, ZEN_WRITER_ICON_SVG);
     this.statusBarItemEl = this.addStatusBarItem();
     this.registerCommands();
     this.registerRibbonIcon();
@@ -366,6 +394,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
         if (!this.settings.enabled || this.isComposing) {
           return;
         }
+        this.dismissZenEntryHint();
         const view = this.getActiveMarkdownView();
         if (!view) {
           return;
@@ -378,6 +407,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       if (!this.settings.enabled || this.isComposing) {
         return;
       }
+      this.dismissZenEntryHint();
       if (event.key === "Escape") {
         void this.exitZenMode().catch((_e) => {
           console.error("Zen Writer: Failed to exit via Escape", _e);
@@ -514,6 +544,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     this.registerDomEvent(window, "blur", () => {
       this.rememberActiveCursor();
       this.clearPickerRecovery();
+      this.dismissZenEntryHint();
       this.setZenExitButtonVisible(false);
       this.setZenRuntimeControlOpen(false);
     });
@@ -522,6 +553,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
         this.rememberActiveCursor();
         this.clearPickerRecovery();
         this.stopPickerHealthCheck();
+        this.dismissZenEntryHint();
         this.setZenRuntimeControlOpen(false);
       } else {
         this.schedulePickerRecovery("selection");
@@ -539,6 +571,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     this.clearPickerSettleFrame();
     this.clearPickerRecovery();
     this.stopPickerHealthCheck();
+    this.dismissZenEntryHint();
     this.removeZenExitButton();
     this.removeZenRuntimeControlCenter();
     this.clearPendingProgrammaticSelection();
@@ -570,6 +603,8 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       activeLineGlow: (_k = rawSettings.activeLineGlow) != null ? _k : DEFAULT_SETTINGS.activeLineGlow,
       themeDisplay: (_l = rawSettings.themeDisplay) != null ? _l : DEFAULT_SETTINGS.themeDisplay,
       showExitButton: (_m = rawSettings.showExitButton) != null ? _m : DEFAULT_SETTINGS.showExitButton,
+      entryHintEnabled: normalizeZenEntryHintEnabled(rawSettings.entryHintEnabled, rawSettings.entryHintMode),
+      zenRestoreMode: normalizeMarkdownViewMode(rawSettings.zenRestoreMode),
       noiseEnabled: (_n = rawSettings.noiseEnabled) != null ? _n : DEFAULT_SETTINGS.noiseEnabled,
       noiseType: normalizeNoiseScene(rawSettings.noiseType),
       noiseVolume: (_o = rawSettings.noiseVolume) != null ? _o : DEFAULT_SETTINGS.noiseVolume
@@ -587,8 +622,13 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     }
   }
   async enterZenMode() {
-    const view = this.getActiveMarkdownView();
-    if (!view) {
+    const currentView = this.getActiveWorkspaceMarkdownView();
+    if (!currentView) {
+      return;
+    }
+    const originalMode = this.getMarkdownViewMode(currentView);
+    const view = originalMode === "source" ? currentView : await this.setMarkdownViewMode(currentView, "source");
+    if (!view || this.getMarkdownViewMode(view) !== "source") {
       return;
     }
     const filePath = this.getViewFilePath(view);
@@ -605,26 +645,32 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     }
     this.settings.enabled = true;
     this.settings.zenLockedFile = filePath;
+    this.settings.zenRestoreMode = originalMode;
     await this.saveSettings();
     this.applyZenState();
-    this.createZenExitButton();
+    this.scheduleZenEntryHint();
     if (this.settings.noiseEnabled) {
       this.noiseEngine.start(this.settings.noiseType, this.settings.noiseVolume);
     }
   }
   async exitZenMode() {
+    const restoreMode = this.settings.zenRestoreMode;
+    const lockedFilePath = this.settings.zenLockedFile;
     this.settings.enabled = false;
     this.settings.zenLockedFile = null;
+    this.settings.zenRestoreMode = null;
     if (this.leftSidebarWasVisible) {
       this.app.workspace.leftSplit.expand();
     }
     if (this.rightSidebarWasVisible) {
       this.app.workspace.rightSplit.expand();
     }
+    this.dismissZenEntryHint();
     this.removeZenExitButton();
     this.noiseEngine.stop();
     await this.saveSettings();
     this.applyZenState();
+    await this.restoreZenViewMode(restoreMode, lockedFilePath);
   }
   restoreLockedFile() {
     if (!this.settings.zenLockedFile) {
@@ -668,6 +714,9 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     });
     document.body.appendChild(button);
     this.zenExitButtonEl = button;
+    if (this.zenEntryHintActive) {
+      button.classList.add("is-visible");
+    }
     hotspot.addEventListener("mouseenter", () => {
       button == null ? void 0 : button.classList.add("is-visible");
     });
@@ -706,6 +755,10 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     if (!this.settings.enabled || !this.settings.showExitButton || !this.zenExitButtonEl) {
       return;
     }
+    if (this.zenEntryHintActive) {
+      this.setZenExitButtonVisible(true);
+      return;
+    }
     if (pointerClientY <= TOP_EXIT_HINT_BAND_HEIGHT_PX) {
       this.setZenExitButtonVisible(true);
       return;
@@ -739,8 +792,69 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       { value: "wind", label: t.noiseWind }
     ];
   }
+  shouldShowZenEntryHint() {
+    return this.settings.enabled && this.settings.entryHintEnabled;
+  }
+  clearZenEntryHintTimers() {
+    if (this.zenEntryHintDelayTimer !== null) {
+      window.clearTimeout(this.zenEntryHintDelayTimer);
+      this.zenEntryHintDelayTimer = null;
+    }
+    if (this.zenEntryHintHideTimer !== null) {
+      window.clearTimeout(this.zenEntryHintHideTimer);
+      this.zenEntryHintHideTimer = null;
+    }
+  }
+  setZenRuntimeControlPeekVisible(visible) {
+    if (!this.zenRuntimeControlEl) {
+      return;
+    }
+    this.zenRuntimeControlEl.classList.toggle("is-peeking", visible);
+  }
+  dismissZenEntryHint() {
+    var _a;
+    const wasActive = this.zenEntryHintActive;
+    this.clearZenEntryHintTimers();
+    this.zenEntryHintActive = false;
+    this.setZenRuntimeControlPeekVisible(false);
+    if (wasActive && this.zenExitButtonEl && !this.zenExitButtonEl.matches(":hover") && !((_a = this.zenExitTriggerEl) == null ? void 0 : _a.matches(":hover"))) {
+      this.setZenExitButtonVisible(false);
+    }
+  }
+  scheduleZenEntryHint() {
+    this.dismissZenEntryHint();
+    if (!this.shouldShowZenEntryHint()) {
+      return;
+    }
+    const hasHintTarget = this.settings.showExitButton && !!this.zenExitButtonEl || !!this.zenRuntimeLauncherEl;
+    if (!hasHintTarget) {
+      return;
+    }
+    this.zenEntryHintDelayTimer = window.setTimeout(() => {
+      this.zenEntryHintDelayTimer = null;
+      if (!this.shouldShowZenEntryHint()) {
+        return;
+      }
+      const hasVisibleTarget = this.settings.showExitButton && !!this.zenExitButtonEl || !!this.zenRuntimeLauncherEl;
+      if (!hasVisibleTarget) {
+        return;
+      }
+      this.zenEntryHintActive = true;
+      if (this.settings.showExitButton) {
+        this.setZenExitButtonVisible(true);
+      }
+      this.setZenRuntimeControlPeekVisible(true);
+      this.zenEntryHintHideTimer = window.setTimeout(() => {
+        this.zenEntryHintHideTimer = null;
+        this.dismissZenEntryHint();
+      }, ZEN_ENTRY_HINT_DURATION_MS);
+    }, ZEN_ENTRY_HINT_DELAY_MS);
+  }
   setZenRuntimeControlOpen(open) {
     var _a, _b, _c;
+    if (open) {
+      this.dismissZenEntryHint();
+    }
     this.zenRuntimeControlOpen = open;
     (_a = this.zenRuntimeControlEl) == null ? void 0 : _a.classList.toggle("is-open", open);
     (_b = this.zenRuntimeLauncherEl) == null ? void 0 : _b.setAttribute("aria-expanded", String(open));
@@ -779,6 +893,9 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     this.zenRuntimeControlEl = container;
     this.zenRuntimeLauncherEl = launcher;
     this.zenRuntimePanelEl = panel;
+    if (this.zenEntryHintActive) {
+      this.setZenRuntimeControlPeekVisible(true);
+    }
     this.zenRuntimeOutsidePointerHandler = (event) => {
       if (!this.zenRuntimeControlOpen || !this.zenRuntimeControlEl || !(event.target instanceof Node)) {
         return;
@@ -1049,6 +1166,13 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     if (this.statusBarItemEl) {
       this.statusBarItemEl.textContent = this.settings.enabled ? t.statusBarOn : t.statusBarOff;
     }
+    if (this.settings.enabled && this.settings.showExitButton) {
+      if (!this.zenExitButtonEl || !this.zenExitTriggerEl) {
+        this.createZenExitButton();
+      }
+    } else {
+      this.removeZenExitButton();
+    }
     if (this.settings.enabled && !this.isComposing) {
       window.requestAnimationFrame(() => {
         this.trySyncPickerImmediate();
@@ -1071,6 +1195,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       this.clearPickerViewScope();
       this.clearFocusFrameEdgeSpacing();
       this.clearFocusFrameResync();
+      this.dismissZenEntryHint();
       this.removeZenRuntimeControlCenter();
     }
   }
@@ -1451,12 +1576,68 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
         return 0;
     }
   }
+  getActiveWorkspaceMarkdownView() {
+    return this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
+  }
+  getMarkdownViewMode(view) {
+    if (typeof view.getMode === "function") {
+      return view.getMode();
+    }
+    return "source";
+  }
+  async setMarkdownViewMode(view, mode) {
+    var _a;
+    if (this.getMarkdownViewMode(view) === mode) {
+      return view;
+    }
+    const leaf = view.leaf;
+    const currentState = leaf.getViewState();
+    const nextState = {
+      ...currentState,
+      state: {
+        ...(_a = currentState.state) != null ? _a : {},
+        mode
+      }
+    };
+    await leaf.setViewState(nextState);
+    await new Promise((resolve) => {
+      window.requestAnimationFrame(() => resolve());
+    });
+    return leaf.view instanceof import_obsidian.MarkdownView ? leaf.view : this.getActiveWorkspaceMarkdownView();
+  }
+  findMarkdownViewForPath(filePath) {
+    if (!filePath) {
+      return this.getActiveWorkspaceMarkdownView();
+    }
+    const activeView = this.getActiveWorkspaceMarkdownView();
+    if (activeView && this.getViewFilePath(activeView) === filePath) {
+      return activeView;
+    }
+    const leaves = this.app.workspace.getLeavesOfType("markdown");
+    for (const leaf of leaves) {
+      const view = leaf.view;
+      if (view instanceof import_obsidian.MarkdownView && this.getViewFilePath(view) === filePath) {
+        return view;
+      }
+    }
+    return null;
+  }
+  async restoreZenViewMode(mode, filePath) {
+    if (!mode) {
+      return;
+    }
+    const view = this.findMarkdownViewForPath(filePath);
+    if (!view || this.getMarkdownViewMode(view) === mode) {
+      return;
+    }
+    await this.setMarkdownViewMode(view, mode);
+  }
   getActiveMarkdownView() {
-    const view = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
+    const view = this.getActiveWorkspaceMarkdownView();
     if (!view) {
       return null;
     }
-    if (typeof view.getMode === "function" && view.getMode() !== "source") {
+    if (this.getMarkdownViewMode(view) !== "source") {
       return null;
     }
     return view;
@@ -1753,6 +1934,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     if (!this.settings.enabled || this.isComposing) {
       return;
     }
+    this.dismissZenEntryHint();
     if (event.ctrlKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
       return;
     }
@@ -1780,6 +1962,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     if (event.button !== 0) {
       return;
     }
+    this.dismissZenEntryHint();
     if (event.type === "mousedown" && Date.now() - this.runtimePanelDismissPointerTime < 100) {
       this.runtimePanelDismissPointerTime = 0;
       event.preventDefault();
@@ -2020,7 +2203,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       this.ribbonIconEl.setAttribute("aria-label", t.ribbonTooltip);
       return;
     }
-    this.ribbonIconEl = this.addRibbonIcon("pen-tool", t.ribbonTooltip, () => {
+    this.ribbonIconEl = this.addRibbonIcon(ZEN_WRITER_ICON_ID, t.ribbonTooltip, () => {
       void this.toggleZenWriter().catch(() => {
       });
     });
@@ -2066,11 +2249,15 @@ var I18N = {
     pickerHeightDesc: "Sets the height of the centered picker window.",
     pickerPadding: "Picker side padding",
     pickerPaddingDesc: "Adds horizontal inset so the picker window does not touch the editor edges.",
+    settingsGeneral: "General",
+    settingsDetails: "Details",
     restoreDefault: "Restore default",
     ribbonTooltip: "Enter Zen writing mode",
     commandToggle: "Enter/exit Zen writing mode",
     showExitButton: "Show top exit button",
     showExitButtonDesc: "Display a minimal 'X' button at the top that appears on hover to exit Zen mode.",
+    entryHintEnabled: "Entry control hint",
+    entryHintEnabledDesc: "Briefly reveal the exit and control buttons every time Zen mode starts so the interaction model is easy to discover.",
     runtimeControls: "Zen controls",
     runtimePaper: "Paper",
     runtimeAmbient: "Ambient",
@@ -2123,11 +2310,15 @@ var I18N = {
     pickerHeightDesc: "\u8BBE\u7F6E\u5C45\u4E2D\u533A\u57DF\u672A\u88AB\u8FC7\u5EA6\u865A\u5316\u906E\u6321\u7684\u7A97\u53E3\u9AD8\u5EA6\u3002",
     pickerPadding: "\u805A\u7126\u5E26\u5DE6\u53F3\u5185\u8FB9\u8DDD",
     pickerPaddingDesc: "\u589E\u52A0\u6C34\u5E73\u8FB9\u8DDD\uFF0C\u907F\u514D\u5C45\u4E2D\u805A\u7126\u5E26\u7684\u9AD8\u4EAE\u8FB9\u7F18\u76F4\u63A5\u8D34\u4F4F\u7F16\u8F91\u5668\u4E24\u4FA7\u3002",
+    settingsGeneral: "\u901A\u7528",
+    settingsDetails: "\u7EC6\u8282",
     restoreDefault: "\u6062\u590D\u9ED8\u8BA4\u503C",
     ribbonTooltip: "\u8FDB\u5165\u7985\u610F\u5199\u4F5C\u6A21\u5F0F",
     commandToggle: "\u8FDB\u5165/\u9000\u51FA\u7985\u610F\u5199\u4F5C\u6A21\u5F0F",
     showExitButton: "\u663E\u793A\u9876\u90E8\u9000\u51FA\u6309\u94AE",
     showExitButtonDesc: "\u5728\u9875\u9762\u9876\u90E8\u663E\u793A\u4E00\u4E2A\u6781\u6D45\u7684 'X' \u56FE\u6807\uFF0C\u4EC5\u5728\u9F20\u6807\u60AC\u505C\u5728\u9876\u90E8\u65F6\u53EF\u89C1\uFF0C\u70B9\u51FB\u53EF\u9000\u51FA\u7985\u610F\u6A21\u5F0F\u3002",
+    entryHintEnabled: "\u8FDB\u5165\u65F6\u64CD\u4F5C\u63D0\u793A",
+    entryHintEnabledDesc: "\u6BCF\u6B21\u8FDB\u5165\u7985\u610F\u6A21\u5F0F\u65F6\uFF0C\u77ED\u6682\u663E\u793A\u9000\u51FA\u6309\u94AE\u548C\u63A7\u5236\u6309\u94AE\uFF0C\u5E2E\u52A9\u7528\u6237\u5FEB\u901F\u7406\u89E3\u64CD\u4F5C\u65B9\u5F0F\u3002",
     runtimeControls: "\u7985\u610F\u63A7\u5236",
     runtimePaper: "\u7EB8\u5F20",
     runtimeAmbient: "\u73AF\u5883\u97F3",
@@ -2170,6 +2361,7 @@ var ZenWriterSettingTab = class extends import_obsidian.PluginSettingTab {
     const t = I18N[this.plugin.settings.language] || I18N.en;
     containerEl.replaceChildren();
     new import_obsidian.Setting(containerEl).setName(this.plugin.manifest.name).setHeading();
+    new import_obsidian.Setting(containerEl).setName(t.settingsGeneral).setHeading();
     new import_obsidian.Setting(containerEl).setName(t.language).setDesc(t.languageDesc).addDropdown(
       (dropdown) => dropdown.addOption("en", "English").addOption("zh", "\u7B80\u4F53\u4E2D\u6587").setValue(this.plugin.settings.language).onChange((value) => {
         this.plugin.settings.language = value;
@@ -2198,6 +2390,13 @@ var ZenWriterSettingTab = class extends import_obsidian.PluginSettingTab {
         });
       })
     );
+    new import_obsidian.Setting(containerEl).setName(t.entryHintEnabled).setDesc(t.entryHintEnabledDesc).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.entryHintEnabled).onChange((value) => {
+        this.plugin.settings.entryHintEnabled = value;
+        void this.plugin.saveSettings().catch(() => {
+        });
+      })
+    );
     new import_obsidian.Setting(containerEl).setName(t.activeLineGlow).setDesc(t.activeLineGlowDesc).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.activeLineGlow).onChange((value) => {
         this.plugin.settings.activeLineGlow = value;
@@ -2205,6 +2404,7 @@ var ZenWriterSettingTab = class extends import_obsidian.PluginSettingTab {
         });
       })
     );
+    new import_obsidian.Setting(containerEl).setName(t.settingsDetails).setHeading();
     new import_obsidian.Setting(containerEl).setName(t.contentWidth).setDesc(t.contentWidthDesc).addText(
       (text) => text.setPlaceholder("42rem").setValue(this.plugin.settings.maxWidth).onChange((value) => {
         this.plugin.settings.maxWidth = value.trim() || DEFAULT_SETTINGS.maxWidth;

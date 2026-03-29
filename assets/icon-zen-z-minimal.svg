@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <g transform="translate(12 12) rotate(14) scale(1.36) translate(-12 -12)">
+    <rect x="6.2" y="4.9" width="11.6" height="14.2" rx="1.05" stroke="currentColor" stroke-width="1.35"/>
+    <path fill="currentColor" d="M10.95 8.95h4.9v1.4l-3.18 2.86 3.18.8v1.5h-5.2v-1.28l3.34-3.02-3.04-.73z"/>
+  </g>
+</svg>
