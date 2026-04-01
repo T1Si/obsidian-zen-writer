@@ -50,6 +50,7 @@ var TOP_DRAG_STRIP_HEIGHT_PX = 48;
 var TOP_EXIT_HINT_BAND_HEIGHT_PX = 96;
 var ZEN_ENTRY_HINT_DELAY_MS = 260;
 var ZEN_ENTRY_HINT_DURATION_MS = 3e3;
+var AMBIENT_PLAYBACK_START_TIMEOUT_MS = 4500;
 var ZEN_WRITER_ICON_ID = "zen-writer-z";
 var ZEN_WRITER_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><g transform="translate(12 12) rotate(14) scale(1.36) translate(-12 -12)"><rect x="6.2" y="4.9" width="11.6" height="14.2" rx="1.05" stroke="currentColor" stroke-width="1.35"/><path fill="currentColor" d="M10.95 8.95h4.9v1.4l-3.18 2.86 3.18.8v1.5h-5.2v-1.28l3.34-3.02-3.04-.73z"/></g></svg>';
 var DEFAULT_NOISE_SCENE = "rain";
@@ -80,49 +81,61 @@ var IA = "https://archive.org/download";
 var CB = "CampfireByTheRiverRelaxingFireplace";
 var SCENE_URLS = {
   rain: [
+    "https://moodist.mvze.net/sounds/rain/light-rain.mp3",
     `${IA}/${CB}/GentleRainSoundsOnWindowRainAgainstWindow.mp3`,
     `${IA}/${CB}/SoftRain.mp3`
   ],
   thunderstorm: [
+    "https://moodist.mvze.net/sounds/rain/thunder.mp3",
     `${IA}/${CB}/RelaxingSoundsforSleepThunderstorm.mp3`,
     `${IA}/${CB}/ThunderstormRainOnAWindowSoundThunderRainOnGlassAmbience.mp3`,
     `${IA}/${CB}/LluviaAbundanteYtrueno.mp3`
   ],
   campfire: [
+    "https://moodist.mvze.net/sounds/nature/campfire.mp3",
     `${IA}/${CB}/CampfireByTheRiverRelaxingFireplace.mp3`,
     `${IA}/${CB}/LakesideCampfireWithRelaxing.mp3`
   ],
   stream: [
+    "https://moodist.mvze.net/sounds/nature/river.mp3",
     `${IA}/${CB}/ForestCreekSoundsSleepRelaxFocusMeditation.mp3`
   ],
   "forest-wind": [
+    "https://moodist.mvze.net/sounds/nature/wind-in-trees.mp3",
     `${IA}/${CB}/WinterStormSoundHeavyBlizzardSnowstorm.mp3`
   ],
   "city-street": [
+    "https://moodist.mvze.net/sounds/urban/busy-street.mp3",
     `${IA}/SSE_Library_AMBIENCE/TRAFFIC/AMBTraf_Light%20traffic%20with%20a%20few%20streetcars%3B%20voices_CS_USC.mp3`,
     `${IA}/SSE_Library_AMBIENCE/TRAFFIC/AMBTraf_Light%20traffic%20on%20Sunset%20Blvd_CS_USC.mp3`
   ],
   cafe: [
+    "https://moodist.mvze.net/sounds/places/cafe.mp3",
     `${IA}/453074-c-rogers-370973-waweee-coffee-shop-ambience-remastered/453074__c_rogers__370973__waweee__coffee-shop-ambience_remastered.mp3`,
     `${IA}/SSE_Library_AMBIENCE/RESTAURANT%20%26%20BAR/AMBRest_Cafe%20ambience%3B%20good%20walla_CS_USC.mp3`
   ],
   library: [
+    "https://moodist.mvze.net/sounds/places/library.mp3",
     `${IA}/aporee_14686_17127/2011062103GrimmZentrum02Lesesaal03LIMEXZERPT.mp3`,
     `${IA}/SSE_Library_AMBIENCE/OFFICE/AMBOffc_Movement%20in%20indoor%20space%3B%20office%20or%20waiting_CS_USC.mp3`
   ],
   ocean: [
+    "https://moodist.mvze.net/sounds/nature/waves.mp3",
     `${IA}/beachfront-ocean-waves-relaxing-nature-sounds-3-hours/Beachfront%20Ocean%20Waves%20-%20Relaxing%20Nature%20Sounds%203%20Hours.mp3`,
     `${IA}/${CB}/RainSoundsOceanWavesAndDistantThunders.mp3`
   ],
   morning: [
+    "https://moodist.mvze.net/sounds/animals/birds.mp3",
     `${IA}/EarlyMorningMayBirdsSinging/vogels-mei2008-5uursochtends.mp3`,
     `${IA}/${CB}/TropicalIslandBeachAmbienceSoundOceanandSingingBirds.mp3`
   ],
   night: [
+    "https://moodist.mvze.net/sounds/animals/crickets.mp3",
     `${IA}/${CB}/CampfireByTheSeaCricketsOceanWavesNightForestRelaxing%20Fireplace.mp3`,
     `${IA}/FORESTATNIGHTCricketsOwlsRainWindInTrees/FOREST%20AT%20NIGHT%20-%20Crickets%20Owls%20Rain%20Wind%20in%20Trees.mp3`
   ],
   wind: [
+    "https://moodist.mvze.net/sounds/nature/wind.mp3",
     `${IA}/FORESTATNIGHTCricketsOwlsRainWindInTrees/FOREST%20AT%20NIGHT%20-%20Crickets%20Owls%20Rain%20Wind%20in%20Trees.mp3`,
     `${IA}/${CB}/WinterStormSoundHeavyBlizzardSnowstorm.mp3`
   ]
@@ -156,60 +169,20 @@ function normalizeMarkdownViewMode(value) {
   return DEFAULT_SETTINGS.zenRestoreMode;
 }
 var AmbientSoundEngine = class {
-  constructor() {
+  constructor(callbacks = {}) {
+    this.callbacks = callbacks;
     this.audio = null;
     this.fadeFrame = null;
     this.stopTimer = null;
     this._isRunning = false;
+    this.startRequestSeq = 0;
   }
   /** Start streaming a scene. Fades in over `fadeSec` seconds. */
   start(scene, volume, fadeSec = 2, customUrl) {
     this.destroyInternal();
-    const url = (customUrl == null ? void 0 : customUrl.trim()) || this.pickUrl(scene);
-    if (!url) return;
-    const audio = new Audio();
-    audio.src = url;
-    audio.loop = true;
-    audio.volume = 0;
-    audio.preload = "auto";
-    this.audio = audio;
     this._isRunning = true;
-    void audio.play().then(() => {
-      if (this.audio !== audio) {
-        try {
-          audio.pause();
-        } catch (e) {
-        }
-        audio.src = "";
-        return;
-      }
-      this.fadeTo(Math.max(0, Math.min(1, volume)), fadeSec);
-    }).catch(() => {
-      if (this.audio !== audio) {
-        audio.src = "";
-        return;
-      }
-      const fallbackUrl = this.pickFallbackUrl(scene, url);
-      if (fallbackUrl) {
-        audio.src = fallbackUrl;
-        void audio.play().then(() => {
-          if (this.audio !== audio) {
-            try {
-              audio.pause();
-            } catch (e) {
-            }
-            audio.src = "";
-            return;
-          }
-          this.fadeTo(Math.max(0, Math.min(1, volume)), fadeSec);
-        }).catch(() => {
-          if (this.audio === audio) this.destroyInternal();
-          else audio.src = "";
-        });
-      } else {
-        if (this.audio === audio) this.destroyInternal();
-      }
-    });
+    const requestSeq = ++this.startRequestSeq;
+    void this.startWithSmartRouting(scene, Math.max(0, Math.min(1, volume)), fadeSec, customUrl, requestSeq);
   }
   /** Fade out and release the audio element. */
   stop(fadeSec = 2) {
@@ -240,7 +213,8 @@ var AmbientSoundEngine = class {
       }
       const elapsed = now - startTime;
       const t = Math.min(elapsed / durationMs, 1);
-      audio.volume = startVol * (1 - t);
+      const newVolume = startVol * (1 - t);
+      audio.volume = Math.max(0, Math.min(1, newVolume));
       if (t < 1) {
         this.fadeFrame = requestAnimationFrame(tick);
       } else {
@@ -276,10 +250,107 @@ var AmbientSoundEngine = class {
     const urls = SCENE_URLS[scene];
     return (_a = urls == null ? void 0 : urls[0]) != null ? _a : "";
   }
+  async startWithSmartRouting(scene, volume, fadeSec, customUrl, requestSeq) {
+    var _a, _b;
+    const urls = await this.collectCandidateUrlsWithSmartFallback(scene, customUrl);
+    if (!this._isRunning || requestSeq !== this.startRequestSeq) {
+      return;
+    }
+    if (urls.length === 0) {
+      this.destroyInternal();
+      (_b = (_a = this.callbacks).onPlaybackFailed) == null ? void 0 : _b.call(_a, scene);
+      return;
+    }
+    this.startPlaybackAttempt(scene, volume, fadeSec, urls, 0);
+  }
+  collectCandidateUrls(scene, customUrl) {
+    var _a;
+    const urls = [...(_a = SCENE_URLS[scene]) != null ? _a : []];
+    const preferredUrl = customUrl == null ? void 0 : customUrl.trim();
+    if (!preferredUrl) {
+      return urls;
+    }
+    const normalizedPreferredUrl = preferredUrl.replace(/[?&]zenRetry=\d+$/, "");
+    const remainingUrls = urls.filter((url) => url !== normalizedPreferredUrl);
+    return [preferredUrl, ...remainingUrls];
+  }
+  async collectCandidateUrlsWithSmartFallback(scene, customUrl) {
+    return this.collectCandidateUrls(scene, customUrl);
+  }
   pickFallbackUrl(scene, failedUrl) {
     const urls = SCENE_URLS[scene];
     const next = urls == null ? void 0 : urls.find((u) => u !== failedUrl);
     return next != null ? next : null;
+  }
+  startPlaybackAttempt(scene, volume, fadeSec, urls, attemptIndex) {
+    var _a, _b;
+    const url = urls[attemptIndex];
+    if (!url) {
+      this.destroyInternal();
+      (_b = (_a = this.callbacks).onPlaybackFailed) == null ? void 0 : _b.call(_a, scene);
+      return;
+    }
+    const audio = new Audio();
+    audio.src = url;
+    audio.loop = true;
+    audio.volume = 0;
+    audio.preload = "auto";
+    this.audio = audio;
+    let finished = false;
+    let startTimer = window.setTimeout(() => {
+      if (finished || this.audio !== audio) {
+        return;
+      }
+      moveToNextUrl();
+    }, AMBIENT_PLAYBACK_START_TIMEOUT_MS);
+    const cleanupAttempt = () => {
+      if (startTimer !== null) {
+        window.clearTimeout(startTimer);
+        startTimer = null;
+      }
+      audio.removeEventListener("playing", handlePlaying);
+      audio.removeEventListener("error", handleError);
+    };
+    const moveToNextUrl = () => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      cleanupAttempt();
+      if (this.audio === audio) {
+        this.releaseAudio(audio);
+        this.startPlaybackAttempt(scene, volume, fadeSec, urls, attemptIndex + 1);
+      } else {
+        audio.src = "";
+      }
+    };
+    const handlePlaying = () => {
+      var _a2, _b2;
+      if (finished || this.audio !== audio) {
+        return;
+      }
+      finished = true;
+      cleanupAttempt();
+      (_b2 = (_a2 = this.callbacks).onPlaybackStarted) == null ? void 0 : _b2.call(_a2, scene);
+      this.fadeTo(volume, fadeSec);
+    };
+    const handleError = () => {
+      if (this.audio !== audio) {
+        audio.src = "";
+        return;
+      }
+      moveToNextUrl();
+    };
+    audio.addEventListener("playing", handlePlaying);
+    audio.addEventListener("error", handleError);
+    audio.load();
+    void audio.play().catch(() => {
+      if (this.audio !== audio) {
+        audio.src = "";
+        return;
+      }
+      moveToNextUrl();
+    });
   }
   fadeTo(targetVol, fadeSec) {
     if (!this.audio) return;
@@ -292,11 +363,12 @@ var AmbientSoundEngine = class {
       if (!this.audio || this.audio !== audio) return;
       const elapsed = now - startTime;
       const t = Math.min(elapsed / durationMs, 1);
-      audio.volume = startVol + (targetVol - startVol) * t;
+      const newVolume = startVol + (targetVol - startVol) * t;
+      audio.volume = Math.max(0, Math.min(1, newVolume));
       if (t < 1) {
         this.fadeFrame = requestAnimationFrame(tick);
       } else {
-        audio.volume = targetVol;
+        audio.volume = Math.max(0, Math.min(1, targetVol));
         this.fadeFrame = null;
       }
     };
@@ -376,10 +448,19 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     this.zenEntryHintDelayTimer = null;
     this.zenEntryHintHideTimer = null;
     this.zenEntryHintActive = false;
+    this.ambientNoiseLoadFailed = false;
+    this.ambientNoiseFailureScene = null;
     this.runtimePanelDismissPointerTime = 0;
     this.leftSidebarWasVisible = false;
     this.rightSidebarWasVisible = false;
-    this.noiseEngine = new AmbientNoiseEngine();
+    this.noiseEngine = new AmbientNoiseEngine({
+      onPlaybackStarted: (scene) => {
+        this.handleAmbientPlaybackStarted(scene);
+      },
+      onPlaybackFailed: (scene) => {
+        this.handleAmbientPlaybackFailed(scene);
+      }
+    });
     this.ribbonIconEl = null;
   }
   async onload() {
@@ -548,6 +629,9 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       this.setZenExitButtonVisible(false);
       this.setZenRuntimeControlOpen(false);
     });
+    this.registerDomEvent(window, "online", () => {
+      this.retryAmbientPlaybackIfNeeded();
+    });
     this.registerDomEvent(document, "visibilitychange", () => {
       if (document.hidden) {
         this.rememberActiveCursor();
@@ -558,6 +642,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       } else {
         this.schedulePickerRecovery("selection");
         this.startPickerHealthCheck();
+        this.retryAmbientPlaybackIfNeeded();
       }
     });
     this.applyZenState();
@@ -667,6 +752,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     }
     this.dismissZenEntryHint();
     this.removeZenExitButton();
+    this.clearAmbientPlaybackError();
     this.noiseEngine.stop();
     await this.saveSettings();
     this.applyZenState();
@@ -792,6 +878,62 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       { value: "wind", label: t.noiseWind }
     ];
   }
+  clearAmbientPlaybackError() {
+    if (!this.ambientNoiseLoadFailed && this.ambientNoiseFailureScene === null) {
+      return;
+    }
+    console.log("[Zen Writer] Clearing ambient playback error");
+    this.ambientNoiseLoadFailed = false;
+    this.ambientNoiseFailureScene = null;
+    if (this.zenRuntimeControlEl) {
+      console.log("[Zen Writer] Re-rendering control panel to clear error");
+      this.renderZenRuntimeControlPanel();
+    }
+  }
+  handleAmbientPlaybackStarted(_scene) {
+    console.log("[Zen Writer] Playback started successfully");
+    this.clearAmbientPlaybackError();
+  }
+  handleAmbientPlaybackFailed(scene) {
+    console.log("[Zen Writer] Playback failed for scene:", scene);
+    this.ambientNoiseLoadFailed = true;
+    this.ambientNoiseFailureScene = scene;
+    if (this.zenRuntimeControlEl) {
+      this.renderZenRuntimeControlPanel();
+    }
+  }
+  retryAmbientPlaybackIfNeeded() {
+    console.log("[Zen Writer] retryAmbientPlaybackIfNeeded called", {
+      enabled: this.settings.enabled,
+      noiseEnabled: this.settings.noiseEnabled,
+      isRunning: this.noiseEngine.isRunning,
+      onLine: typeof navigator !== "undefined" && "onLine" in navigator ? navigator.onLine : "unknown"
+    });
+    if (!this.settings.enabled || !this.settings.noiseEnabled) {
+      console.log("[Zen Writer] Skip retry: settings disabled");
+      return;
+    }
+    if (this.noiseEngine.isRunning) {
+      console.log("[Zen Writer] Skip retry: engine already running");
+      return;
+    }
+    if (typeof navigator !== "undefined" && "onLine" in navigator && navigator.onLine === false) {
+      console.log("[Zen Writer] Skip retry: offline");
+      return;
+    }
+    console.log("[Zen Writer] Starting audio retry...");
+    const retryUrl = this.buildAmbientRetryUrl(this.settings.noiseType);
+    this.noiseEngine.start(this.settings.noiseType, this.settings.noiseVolume, 0.8, retryUrl);
+  }
+  buildAmbientRetryUrl(scene) {
+    var _a;
+    const primaryUrl = (_a = SCENE_URLS[scene]) == null ? void 0 : _a[0];
+    if (!primaryUrl) {
+      return void 0;
+    }
+    const separator = primaryUrl.includes("?") ? "&" : "?";
+    return `${primaryUrl}${separator}zenRetry=${Date.now()}`;
+  }
   shouldShowZenEntryHint() {
     return this.settings.enabled && this.settings.entryHintEnabled;
   }
@@ -884,7 +1026,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     const panel = document.createElement("div");
     panel.className = "zen-runtime-panel";
     panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-label", t.runtimeControls);
+    panel.setAttribute("aria-labelledby", "zen-runtime-controls-title");
     panel.setAttribute("aria-hidden", "true");
     container.appendChild(hotspot);
     container.appendChild(launcher);
@@ -933,11 +1075,11 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     const t = I18N[this.settings.language] || I18N.en;
     const panel = this.zenRuntimePanelEl;
     panel.replaceChildren();
-    panel.setAttribute("aria-label", t.runtimeControls);
     (_a = this.zenRuntimeLauncherEl) == null ? void 0 : _a.setAttribute("aria-label", t.runtimeControls);
     const header = document.createElement("div");
     header.className = "zen-runtime-header";
     const title = document.createElement("div");
+    title.id = "zen-runtime-controls-title";
     title.className = "zen-runtime-title";
     title.textContent = t.runtimeControls;
     header.appendChild(title);
@@ -999,6 +1141,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       if (nextEnabled) {
         this.noiseEngine.start(this.settings.noiseType, this.settings.noiseVolume);
       } else {
+        this.clearAmbientPlaybackError();
         this.noiseEngine.stop(0.8);
       }
       this.renderZenRuntimeControlPanel();
@@ -1008,6 +1151,12 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
     ambientTopRow.appendChild(ambientToggle);
     ambientSection.appendChild(ambientTopRow);
     if (this.settings.noiseEnabled) {
+      if (this.ambientNoiseLoadFailed) {
+        const ambientNotice = document.createElement("div");
+        ambientNotice.className = "zen-runtime-note zen-runtime-note-error";
+        ambientNotice.textContent = t.noiseLoadFailedInline;
+        ambientSection.appendChild(ambientNotice);
+      }
       const sceneRow = document.createElement("label");
       sceneRow.className = "zen-runtime-stack";
       const sceneLabel = document.createElement("span");
@@ -1205,6 +1354,7 @@ var ZenWriterPlugin = class extends import_obsidian.Plugin {
       return;
     }
     if (!this.settings.noiseEnabled) {
+      this.clearAmbientPlaybackError();
       if (this.noiseEngine.isRunning) {
         this.noiseEngine.stop();
       }
@@ -2269,23 +2419,24 @@ var I18N = {
     noiseEnabledDesc: "Play a gentle background sound to help you stay in flow while writing.",
     noiseType: "Sound scene",
     noiseTypeDesc: "Choose the synthesized ambient scene. All sounds are generated in real-time \u2014 no audio files.",
-    noiseRain: "\u{1F327}\uFE0F  Rain",
-    noiseThunderstorm: "\u26C8\uFE0F  Thunderstorm",
-    noiseCampfire: "\u{1F525}  Campfire",
-    noiseStream: "\u{1F4A7}  Stream",
-    noiseForestWind: "\u{1F332}  Forest wind",
-    noiseCityStreet: "\u{1F3D9}\uFE0F  City street",
-    noiseCafe: "\u2615  Coffee shop",
-    noiseLibrary: "\u{1F4DA}  Library",
-    noiseOcean: "\u{1F30A}  Ocean waves",
-    noiseMorning: "\u{1F305}  Morning birds",
-    noiseNight: "\u{1F319}  Night crickets",
-    noiseWind: "\u{1F32C}\uFE0F  Open wind",
-    noiseWhite: "\u25FB\uFE0F  White noise",
-    noisePink: "\u{1F7EA}  Pink noise",
-    noiseBrown: "\u{1F7EB}  Brown noise",
+    noiseRain: "Rain",
+    noiseThunderstorm: "Thunderstorm",
+    noiseCampfire: "Campfire",
+    noiseStream: "Stream",
+    noiseForestWind: "Forest wind",
+    noiseCityStreet: "City street",
+    noiseCafe: "Coffee shop",
+    noiseLibrary: "Library",
+    noiseOcean: "Ocean waves",
+    noiseMorning: "Morning birds",
+    noiseNight: "Night crickets",
+    noiseWind: "Open wind",
+    noiseWhite: "White noise",
+    noisePink: "Pink noise",
+    noiseBrown: "Brown noise",
     noiseVolume: "Volume",
     noiseVolumeDesc: "Adjust the volume of the ambient sound.",
+    noiseLoadFailedInline: "Ambient sound is currently unavailable. Please check your network connection.",
     statusBarOn: "Zen Writer: picker",
     statusBarOff: "Zen Writer: off"
   },
@@ -2330,23 +2481,24 @@ var I18N = {
     noiseEnabledDesc: "\u8FDB\u5165\u7985\u610F\u6A21\u5F0F\u65F6\u64AD\u653E\u5408\u6210\u7684\u573A\u666F\u97F3\u6548\uFF0C\u5E2E\u52A9\u4F60\u66F4\u5FEB\u8FDB\u5165\u5FC3\u6D41\u72B6\u6001\u3002",
     noiseType: "\u58F0\u97F3\u573A\u666F",
     noiseTypeDesc: "\u9009\u62E9\u8981\u5408\u6210\u7684\u73AF\u5883\u97F3\u573A\u666F\uFF0C\u6240\u6709\u58F0\u97F3\u5747\u5B9E\u65F6\u751F\u6210\uFF0C\u65E0\u9700\u97F3\u9891\u6587\u4EF6\u3002",
-    noiseRain: "\u{1F327}\uFE0F  \u96E8\u58F0",
-    noiseThunderstorm: "\u26C8\uFE0F  \u96F7\u66B4",
-    noiseCampfire: "\u{1F525}  \u7BDD\u706B",
-    noiseStream: "\u{1F4A7}  \u6EAA\u6D41",
-    noiseForestWind: "\u{1F332}  \u68EE\u6797\u98CE\u58F0",
-    noiseCityStreet: "\u{1F3D9}\uFE0F  \u57CE\u5E02\u8857\u9053",
-    noiseCafe: "\u2615  \u5496\u5561\u9986",
-    noiseLibrary: "\u{1F4DA}  \u56FE\u4E66\u9986",
-    noiseOcean: "\u{1F30A}  \u6D77\u6D6A",
-    noiseMorning: "\u{1F305}  \u6668\u95F4\u9E1F\u9E23",
-    noiseNight: "\u{1F319}  \u591C\u665A\u866B\u9E23",
-    noiseWind: "\u{1F32C}\uFE0F  \u65F7\u91CE\u98CE\u58F0",
-    noiseWhite: "\u25FB\uFE0F  \u767D\u566A\u97F3",
-    noisePink: "\u{1F7EA}  \u7C89\u566A\u97F3",
-    noiseBrown: "\u{1F7EB}  \u68D5\u566A\u97F3",
+    noiseRain: "\u96E8\u58F0",
+    noiseThunderstorm: "\u96F7\u66B4",
+    noiseCampfire: "\u7BDD\u706B",
+    noiseStream: "\u6EAA\u6D41",
+    noiseForestWind: "\u68EE\u6797\u98CE\u58F0",
+    noiseCityStreet: "\u57CE\u5E02\u8857\u9053",
+    noiseCafe: "\u5496\u5561\u9986",
+    noiseLibrary: "\u56FE\u4E66\u9986",
+    noiseOcean: "\u6D77\u6D6A",
+    noiseMorning: "\u6668\u95F4\u9E1F\u9E23",
+    noiseNight: "\u591C\u665A\u866B\u9E23",
+    noiseWind: "\u65F7\u91CE\u98CE\u58F0",
+    noiseWhite: "\u767D\u566A\u97F3",
+    noisePink: "\u7C89\u566A\u97F3",
+    noiseBrown: "\u68D5\u566A\u97F3",
     noiseVolume: "\u97F3\u91CF",
     noiseVolumeDesc: "\u8C03\u8282\u73AF\u5883\u97F3\u7684\u64AD\u653E\u97F3\u91CF\u3002",
+    noiseLoadFailedInline: "\u73AF\u5883\u97F3\u5F53\u524D\u4E0D\u53EF\u7528\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u8FDE\u63A5\u3002",
     statusBarOn: "Zen Writer: \u805A\u7126\u4E2D",
     statusBarOff: "Zen Writer: \u5DF2\u5173\u95ED"
   }
@@ -2490,6 +2642,7 @@ var ZenWriterSettingTab = class extends import_obsidian.PluginSettingTab {
       (toggle) => toggle.setValue(this.plugin.settings.noiseEnabled).onChange((value) => {
         this.plugin.settings.noiseEnabled = value;
         if (!value) {
+          this.plugin.clearAmbientPlaybackError();
           this.plugin.noiseEngine.destroy();
         }
         void (async () => {

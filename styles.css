@@ -452,6 +452,20 @@ body.zen-writer-enabled .workspace-split.mod-vertical > .workspace-leaf-content 
   gap: 8px;
 }
 
+.zen-runtime-note {
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.zen-runtime-note-error {
+  color: #8f352f;
+  background: rgba(143, 53, 47, 0.08);
+}
+
 .zen-runtime-theme-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -654,6 +668,16 @@ body.zen-writer-enabled.zen-theme-dark .zen-runtime-select {
 body.zen-writer-enabled.zen-theme-dark .zen-runtime-label,
 body.zen-writer-enabled.zen-theme-dark .zen-runtime-value {
   color: rgba(255, 255, 255, 0.72);
+}
+
+body.zen-writer-enabled.zen-theme-dark .zen-runtime-note {
+  color: rgba(255, 255, 255, 0.76);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+body.zen-writer-enabled.zen-theme-dark .zen-runtime-note-error {
+  color: #ffb8b1;
+  background: rgba(255, 122, 106, 0.12);
 }
 
 body.zen-writer-enabled.zen-theme-dark .zen-runtime-switch,
